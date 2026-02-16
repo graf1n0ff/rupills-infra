@@ -1,0 +1,91 @@
+/*
+Theme Name: Flatsome Child
+Description: This is a child theme for Flatsome Theme
+Author: UX Themes
+Template: flatsome
+Version: 3.0
+*/
+
+/*************** ADD CUSTOM CSS HERE.   ***************/
+.woocommerce button.button[name="apply_coupon"] {
+    color: white !important;
+    background-color: #3498db;
+    text-shadow: 0px 0px 0px #fff;
+    text-transform: uppercase;
+}
+
+/*.woocommerce button.button[name="apply_coupon"]:hover {
+    background-color: red;
+}*/
+/* скрывает SKU */
+.sku_wrapper {display: none !important;}
+
+/* скрывает галочку запомнить меня при логине, в файлах сделал ее активной checked */
+.woocommerce-form__label-for-checkbox.woocommerce-form-login__rememberme {
+    display: none;
+}
+span#wacv_checkout_gdpr_block
+ {
+    display: none;
+}
+.woocommerce-privacy-policy-text {
+    display: none;
+}
+
+/******************/
+
+.make_a_deposit_checkout .ywf_amount_input_container .ywf_deposit_content input.ywf_deposit {
+    width: 144px;
+    margin-left: 0px;
+    margin-right: 10px;
+}
+.ywf_currency_symbol
+{display: none;}
+/******************/
+
+.whatsapp-button{
+    position: fixed;
+    bottom: 15px;
+    right: 15px;
+    z-index: 99;
+    background-color: #25d366;
+    border-radius: 50px;
+    color: #ffffff;
+    text-decoration: none;
+    width: 50px;
+    height: 50px;
+    font-size: 30px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    -webkit-box-shadow: 0px 0px 25px -6px rgba(0,0,0,1);
+    -moz-box-shadow: 0px 0px 25px -6px rgba(0,0,0,1);
+    box-shadow: 0px 0px 25px -6px rgba(0,0,0,1);
+    animation: effect 5s infinite ease-in;
+}
+
+@keyframes effect {
+    20%, 100% {
+        width: 50px;
+        height: 50px;
+        font-size: 30px;
+    }
+    0%, 10%{
+        width: 55px;
+        height: 55px;
+        font-size: 35px;
+    }
+    5%{
+        width: 50px;
+        height: 50px;
+        font-size: 30px;
+    }
+}
+
+@media only screen and (max-width: 48em) {
+/*************** ADD MOBILE ONLY CSS HERE  ***************/
+
+
+}
+

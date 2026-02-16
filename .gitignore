@@ -1,0 +1,73 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# WordPress core (будет скачан автоматически)
+html/wp-admin/
+html/wp-includes/
+html/wp-*.php
+html/xmlrpc.php
+html/license.txt
+html/readme.html
+
+# WordPress config
+html/wp-config.php
+html/wp-config-sample.php
+
+# WordPress content - исключаем плагины и uploads
+html/wp-content/plugins/
+html/wp-content/uploads/
+html/wp-content/cache/
+html/wp-content/litespeed/
+html/wp-content/backup*/
+html/wp-content/upgrade/
+html/wp-content/debug.log
+
+# Themes - только родительские темы исключаем, flatsome-child оставляем
+html/wp-content/themes/flatsome/
+html/wp-content/themes/twenty*/
+
+# Database dumps
+*.sql
+*.sql.gz
+*.sql.bz2
+db-init/*.sql
+db-init/*.sql.gz
+
+# Backups
+backups/*.tar.gz
+backups/*.sql
+backups/*.sql.gz
+backups/*.enc
+!backups/.gitkeep
+
+# Docker volumes
+db_data/
+redis_data/
+
+# Logs
+*.log
+logs/
+
+# OpenLiteSpeed config (может содержать секреты)
+lsws-config/admin_config.conf
+lsws-config/htpasswd
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Cursor
+.cursor/
+
+# Backup scripts output
+backup-*.sh.log

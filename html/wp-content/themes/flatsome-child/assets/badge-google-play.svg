@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 135 40" width="135" height="40">
+  <defs>
+    <linearGradient id="gp1" x1="21.8" y1="33.29" x2="5.02" y2="16.51" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00A0FF"/>
+      <stop offset=".007" stop-color="#00A1FF"/>
+      <stop offset=".26" stop-color="#00BEFF"/>
+      <stop offset=".512" stop-color="#00D2FF"/>
+      <stop offset=".76" stop-color="#00DFFF"/>
+      <stop offset="1" stop-color="#00E3FF"/>
+    </linearGradient>
+    <linearGradient id="gp2" x1="33.83" y1="20" x2="9.64" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFE000"/>
+      <stop offset=".409" stop-color="#FFBD00"/>
+      <stop offset=".775" stop-color="#FFA500"/>
+      <stop offset="1" stop-color="#FF9C00"/>
+    </linearGradient>
+    <linearGradient id="gp3" x1="24.83" y1="22.3" x2="2.07" y2="45.05" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF3A44"/>
+      <stop offset="1" stop-color="#C31162"/>
+    </linearGradient>
+    <linearGradient id="gp4" x1="7.3" y1=".18" x2="17.46" y2="10.34" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#32A071"/>
+      <stop offset=".069" stop-color="#2DA771"/>
+      <stop offset=".476" stop-color="#15CF74"/>
+      <stop offset=".801" stop-color="#06E775"/>
+      <stop offset="1" stop-color="#00F076"/>
+    </linearGradient>
+  </defs>
+  <rect width="135" height="40" rx="5" fill="#5b5b5b"/>
+  <rect x=".5" y=".5" width="134" height="39" rx="4.5" fill="none" stroke="#7a7a7a" stroke-width=".5"/>
+  <!-- Play triangle -->
+  <path d="M10.44 7.54a2 2 0 00-.46 1.4v22.12a2 2 0 00.46 1.4l.07.07L22.9 20.14v-.28L10.51 7.47z" fill="url(#gp1)"/>
+  <path d="M27.03 24.28l-4.13-4.14v-.28l4.13-4.14.09.05 4.89 2.78c1.4.79 1.4 2.09 0 2.89l-4.89 2.78z" fill="url(#gp2)"/>
+  <path d="M27.12 24.23L22.9 20 10.44 32.46a1.63 1.63 0 002.08.06l14.6-8.29" fill="url(#gp3)"/>
+  <path d="M27.12 15.77l-14.6-8.29a1.63 1.63 0 00-2.08.06L22.9 20z" fill="url(#gp4)"/>
+  <!-- Text "GET IT ON" -->
+  <text fill="rgba(255,255,255,0.5)" font-family="'Roboto',Arial,sans-serif" font-size="7.5" letter-spacing=".8">
+    <tspan x="47.52" y="12">GET IT ON</tspan>
+  </text>
+  <!-- Text "Google Play" -->
+  <text fill="rgba(255,255,255,0.5)" font-family="'Roboto',Arial,sans-serif" font-weight="500" font-size="15.5">
+    <tspan x="47.52" y="31">Google Play</tspan>
+  </text>
+</svg>
