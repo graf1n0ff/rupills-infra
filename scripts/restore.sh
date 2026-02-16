@@ -124,6 +124,43 @@ restore_wpconfig() {
     echo "✅ wp-config.php восстановлен"
 }
 
+# Восстановление WordPress core
+restore_wpcore() {
+    echo "=== Восстановление WordPress core ==="
+    
+    WP_VERSION_FILE="$BACKUP_DIR/wp-version-latest.txt"
+    if [ ! -f "$WP_VERSION_FILE" ]; then
+        echo "⚠️  Файл версии WordPress не найден: $WP_VERSION_FILE"
+        echo "Используем версию по умолчанию: 6.1.1"
+        WP_VERSION="6.1.1"
+    else
+        WP_VERSION=$(cat "$WP_VERSION_FILE" | tr -d '[:space:]')
+        echo "📌 Восстанавливаем WordPress версии: $WP_VERSION"
+    fi
+    
+    # Проверяем наличие WP-CLI
+    if ! command -v wp &> /dev/null; then
+        echo "⚠️  WP-CLI не найден. Установите WP-CLI или восстановите WordPress core вручную."
+        echo "   Команда: wp core download --version=$WP_VERSION --locale=ru_RU --path=$HTML_DIR"
+        return 1
+    fi
+    
+    echo "📥 Скачивание WordPress $WP_VERSION..."
+    cd "$HTML_DIR"
+    
+    # Бэкап текущего WordPress core на всякий случай
+    if [ -d "wp-admin" ] || [ -d "wp-includes" ]; then
+        mkdir -p "$HTML_DIR/wp-core-backup-$(date +%Y%m%d-%H%M%S)"
+        [ -d "wp-admin" ] && mv wp-admin "$HTML_DIR/wp-core-backup-$(date +%Y%m%d-%H%M%S)/" 2>/dev/null || true
+        [ -d "wp-includes" ] && mv wp-includes "$HTML_DIR/wp-core-backup-$(date +%Y%m%d-%H%M%S)/" 2>/dev/null || true
+        [ -f "wp-*.php" ] && mv wp-*.php "$HTML_DIR/wp-core-backup-$(date +%Y%m%d-%H%M%S)/" 2>/dev/null || true
+    fi
+    
+    wp core download --version="$WP_VERSION" --locale=ru_RU --path="$HTML_DIR" --force
+    
+    echo "✅ WordPress core восстановлен (версия $WP_VERSION)"
+}
+
 # Восстановление темы
 restore_theme() {
     echo "=== Восстановление темы flatsome-child ==="
@@ -160,7 +197,11 @@ case "$RESTORE_TYPE" in
     theme)
         restore_theme
         ;;
+    wp)
+        restore_wpcore
+        ;;
     all)
+        restore_wpcore
         restore_db
         restore_plugins
         restore_uploads
@@ -169,7 +210,7 @@ case "$RESTORE_TYPE" in
         ;;
     *)
         echo "❌ Неизвестный тип восстановления: $RESTORE_TYPE"
-        echo "Использование: $0 [db|plugins|uploads|theme|all]"
+        echo "Использование: $0 [wp|db|plugins|uploads|theme|all]"
         exit 1
         ;;
 esac

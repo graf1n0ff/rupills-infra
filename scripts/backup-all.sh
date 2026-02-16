@@ -12,6 +12,18 @@ mkdir -p "$BACKUP_DIR"
 
 echo "🚀 Начало полного бэкапа..." | tee "$LOG_FILE"
 
+# 0. Сохранение версии WordPress
+if [ -f "/var/www/html/wp-includes/version.php" ]; then
+    echo "" | tee -a "$LOG_FILE"
+    echo "=== Сохранение версии WordPress ===" | tee -a "$LOG_FILE"
+    WP_VERSION=$(grep "wp_version = " /var/www/html/wp-includes/version.php | cut -d"'" -f2)
+    if [ -n "$WP_VERSION" ]; then
+        echo "$WP_VERSION" > "$BACKUP_DIR/wp-version.txt"
+        ln -sf "wp-version.txt" "$BACKUP_DIR/wp-version-latest.txt"
+        echo "✅ Версия WordPress сохранена: $WP_VERSION" | tee -a "$LOG_FILE"
+    fi
+fi
+
 # 1. Бэкап базы данных
 echo "" | tee -a "$LOG_FILE"
 echo "=== Бэкап базы данных ===" | tee -a "$LOG_FILE"

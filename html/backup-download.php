@@ -264,6 +264,7 @@ $backupFiles = getBackupFiles($BACKUP_DIR);
 
         <div class="info">
             <strong>💡 Инструкция:</strong><br>
+            • <strong>wp-version-latest.txt</strong> - версия WordPress (используется при восстановлении)<br>
             • <strong>db-latest.sql.gz</strong> - последний бэкап базы данных<br>
             • <strong>plugins-latest.tar.gz</strong> - последний бэкап плагинов<br>
             • <strong>uploads-latest.tar.gz</strong> - последний бэкап медиа файлов<br>

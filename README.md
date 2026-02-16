@@ -37,12 +37,11 @@ nano .env  # Заполните пароли и настройки
 docker-compose up -d
 ```
 
-4. **Установите WordPress (если первый запуск):**
+4. **Восстановите WordPress core из бэкапа:**
 ```bash
-docker-compose exec web wp core download --locale=ru_RU
-docker-compose exec web wp core config --dbname=wordpress --dbuser=wordpress --dbpass=your_password
-docker-compose exec web wp core install --url=ru-pills.com --title="ru-pills" --admin_user=admin --admin_password=secure_password
+./scripts/restore.sh wp
 ```
+Скрипт автоматически скачает ту же версию WordPress, которая была сохранена в бэкапе.
 
 5. **Восстановите плагины из бэкапа:**
 ```bash
@@ -83,6 +82,7 @@ docker-compose exec web wp core install --url=ru-pills.com --title="ru-pills" --
 ```
 
 Это создаст бэкапы каждые 6 часов:
+- Версия WordPress (wp-version-latest.txt)
 - База данных (db-latest.sql.gz)
 - Плагины (plugins-latest.tar.gz)
 - Uploads (uploads-latest.tar.gz)
@@ -145,14 +145,18 @@ docker-compose up -d db redis
 # Подождите 10 секунд пока БД запустится
 ```
 
-6. **Восстановите всё:**
+6. **Восстановите WordPress core (автоматически скачается нужная версия):**
+```bash
+./scripts/restore.sh wp
+```
+
+7. **Восстановите всё остальное:**
 ```bash
 ./scripts/restore.sh all
 ```
 
-7. **Запустите WordPress:**
+8. **Запустите веб-сервер:**
 ```bash
-docker-compose exec web wp core download --locale=ru_RU --force
 docker-compose up -d web
 ```
 
@@ -164,6 +168,9 @@ docker-compose exec web chown -R lsadm:lsadm /var/www/html
 ### Частичное восстановление
 
 ```bash
+# Только WordPress core (скачает версию из бэкапа)
+./scripts/restore.sh wp
+
 # Только база данных
 ./scripts/restore.sh db
 
