@@ -5,15 +5,26 @@ set -e
 
 BACKUP_DIR="/var/www/backups"
 DATE=$(date +%Y%m%d-%H%M%S)
-DB_NAME="${DB_NAME:-wordpress}"
-DB_USER="${DB_USER:-wordpress}"
-DB_PASSWORD="${DB_PASSWORD}"
-DB_HOST="${DB_HOST:-localhost}"
+WP_CONFIG="/var/www/html/wp-config.php"
 
 # Создаём директорию если её нет
 mkdir -p "$BACKUP_DIR"
 
 echo "📦 Создание бэкапа базы данных..."
+
+# Извлекаем данные из wp-config.php, если переменные окружения не заданы
+if [ -z "$DB_NAME" ] && [ -f "$WP_CONFIG" ]; then
+    DB_NAME=$(grep "DB_NAME" "$WP_CONFIG" | cut -d "'" -f 4)
+    DB_USER=$(grep "DB_USER" "$WP_CONFIG" | cut -d "'" -f 4)
+    DB_PASSWORD=$(grep "DB_PASSWORD" "$WP_CONFIG" | cut -d "'" -f 4)
+    DB_HOST=$(grep "DB_HOST" "$WP_CONFIG" | cut -d "'" -f 4)
+    echo "📝 Получены данные из wp-config.php"
+fi
+
+# Используем значения по умолчанию, если не найдены
+DB_NAME="${DB_NAME:-wordpress}"
+DB_USER="${DB_USER:-wordpress}"
+DB_HOST="${DB_HOST:-localhost}"
 
 # Создаём дамп базы данных
 if [ -n "$DB_PASSWORD" ]; then
