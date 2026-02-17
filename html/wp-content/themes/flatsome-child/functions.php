@@ -1494,3 +1494,7 @@ function rupills_auto_register_on_login( $user, $username, $password ) {
 }
 
 // ============ End Unified Login/Register ============
+
+// Cache exclusions for payment/cart/checkout pages are configured
+// directly in LiteSpeed Cache plugin settings (cache-exc option).
+// No hooks needed — see LiteSpeed > Cache > Do Not Cache URIs.
