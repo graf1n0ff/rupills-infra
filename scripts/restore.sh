@@ -161,17 +161,17 @@ restore_wpcore() {
     echo "✅ WordPress core восстановлен (версия $WP_VERSION)"
 }
 
-# Восстановление темы
+# Восстановление дочерней темы
 restore_theme() {
     echo "=== Восстановление темы flatsome-child ==="
     
     THEME_FILE="$BACKUP_DIR/flatsome-child-latest.tar.gz"
     if [ ! -f "$THEME_FILE" ]; then
-        echo "⚠️  Файл бэкапа темы не найден: $THEME_FILE"
+        echo "⚠️  Файл бэкапа дочерней темы не найден: $THEME_FILE"
         return 0
     fi
     
-    echo "📦 Распаковка темы..."
+    echo "📦 Распаковка дочерней темы..."
     cd "$HTML_DIR/wp-content/themes"
     
     # Бэкап текущей темы на всякий случай
@@ -180,7 +180,137 @@ restore_theme() {
     fi
     
     tar -xzf "$THEME_FILE"
-    echo "✅ Тема восстановлена"
+    echo "✅ Дочерняя тема восстановлена"
+}
+
+# Восстановление родительской темы Flatsome
+restore_flatsome() {
+    echo "=== Восстановление родительской темы Flatsome ==="
+    
+    FLATSOME_FILE="$BACKUP_DIR/flatsome-latest.tar.gz"
+    if [ ! -f "$FLATSOME_FILE" ]; then
+        echo "⚠️  Файл бэкапа Flatsome не найден: $FLATSOME_FILE"
+        return 0
+    fi
+    
+    echo "📦 Распаковка родительской темы..."
+    cd "$HTML_DIR/wp-content/themes"
+    
+    # Бэкап текущей темы на всякий случай
+    if [ -d "flatsome" ]; then
+        mv flatsome flatsome.backup-$(date +%Y%m%d-%H%M%S)
+    fi
+    
+    tar -xzf "$FLATSOME_FILE"
+    echo "✅ Родительская тема Flatsome восстановлена"
+}
+
+# Восстановление mu-plugins
+restore_muplugins() {
+    echo "=== Восстановление mu-plugins ==="
+    
+    MUPLUGINS_FILE="$BACKUP_DIR/mu-plugins-latest.tar.gz"
+    if [ ! -f "$MUPLUGINS_FILE" ]; then
+        echo "⚠️  Файл бэкапа mu-plugins не найден: $MUPLUGINS_FILE"
+        return 0
+    fi
+    
+    echo "📦 Распаковка mu-plugins..."
+    cd "$HTML_DIR/wp-content"
+    
+    # Бэкап текущих mu-plugins на всякий случай
+    if [ -d "mu-plugins" ]; then
+        mv mu-plugins mu-plugins.backup-$(date +%Y%m%d-%H%M%S)
+    fi
+    
+    tar -xzf "$MUPLUGINS_FILE"
+    echo "✅ mu-plugins восстановлены"
+}
+
+# Восстановление шрифтов
+restore_fonts() {
+    echo "=== Восстановление шрифтов ==="
+    
+    FONTS_FILE="$BACKUP_DIR/fonts-latest.tar.gz"
+    if [ ! -f "$FONTS_FILE" ]; then
+        echo "⚠️  Файл бэкапа шрифтов не найден: $FONTS_FILE"
+        return 0
+    fi
+    
+    echo "📦 Распаковка шрифтов..."
+    cd "$HTML_DIR/wp-content"
+    
+    # Бэкап текущих шрифтов на всякий случай
+    if [ -d "fonts" ]; then
+        mv fonts fonts.backup-$(date +%Y%m%d-%H%M%S)
+    fi
+    
+    tar -xzf "$FONTS_FILE"
+    echo "✅ Шрифты восстановлены"
+}
+
+# Восстановление переводов
+restore_languages() {
+    echo "=== Восстановление переводов ==="
+    
+    LANGUAGES_FILE="$BACKUP_DIR/languages-latest.tar.gz"
+    if [ ! -f "$LANGUAGES_FILE" ]; then
+        echo "⚠️  Файл бэкапа переводов не найден: $LANGUAGES_FILE"
+        return 0
+    fi
+    
+    echo "📦 Распаковка переводов..."
+    cd "$HTML_DIR/wp-content"
+    
+    # Бэкап текущих переводов на всякий случай
+    if [ -d "languages" ]; then
+        mv languages languages.backup-$(date +%Y%m%d-%H%M%S)
+    fi
+    
+    tar -xzf "$LANGUAGES_FILE"
+    echo "✅ Переводы восстановлены"
+}
+
+# Восстановление .htaccess
+restore_htaccess() {
+    echo "=== Восстановление .htaccess ==="
+    
+    HTACCESS_FILE="$BACKUP_DIR/htaccess-latest.txt"
+    if [ ! -f "$HTACCESS_FILE" ]; then
+        echo "⚠️  Файл бэкапа .htaccess не найден: $HTACCESS_FILE"
+        return 0
+    fi
+    
+    echo "📦 Восстановление .htaccess..."
+    
+    # Бэкап текущего .htaccess на всякий случай
+    if [ -f "$HTML_DIR/.htaccess" ]; then
+        cp "$HTML_DIR/.htaccess" "$HTML_DIR/.htaccess.backup-$(date +%Y%m%d-%H%M%S)"
+    fi
+    
+    cp "$HTACCESS_FILE" "$HTML_DIR/.htaccess"
+    echo "✅ .htaccess восстановлен"
+}
+
+# Восстановление конфигурации LiteSpeed
+restore_litespeed_conf() {
+    echo "=== Восстановление конфигурации LiteSpeed Cache ==="
+    
+    LITESPEED_FILE="$BACKUP_DIR/litespeed_conf-latest.dat"
+    if [ ! -f "$LITESPEED_FILE" ]; then
+        echo "⚠️  Файл бэкапа LiteSpeed конфига не найден: $LITESPEED_FILE"
+        return 0
+    fi
+    
+    echo "📦 Восстановление конфига..."
+    
+    # Бэкап текущего конфига на всякий случай
+    if [ -f "$HTML_DIR/wp-content/.litespeed_conf.dat" ]; then
+        cp "$HTML_DIR/wp-content/.litespeed_conf.dat" "$HTML_DIR/wp-content/.litespeed_conf.dat.backup-$(date +%Y%m%d-%H%M%S)"
+    fi
+    
+    cp "$LITESPEED_FILE" "$HTML_DIR/wp-content/.litespeed_conf.dat"
+    echo "✅ Конфигурация LiteSpeed восстановлена"
 }
 
 # Основная логика
@@ -197,6 +327,24 @@ case "$RESTORE_TYPE" in
     theme)
         restore_theme
         ;;
+    flatsome)
+        restore_flatsome
+        ;;
+    muplugins)
+        restore_muplugins
+        ;;
+    fonts)
+        restore_fonts
+        ;;
+    languages)
+        restore_languages
+        ;;
+    htaccess)
+        restore_htaccess
+        ;;
+    litespeed)
+        restore_litespeed_conf
+        ;;
     wp)
         restore_wpcore
         ;;
@@ -207,10 +355,16 @@ case "$RESTORE_TYPE" in
         restore_uploads
         restore_wpconfig
         restore_theme
+        restore_flatsome
+        restore_muplugins
+        restore_fonts
+        restore_languages
+        restore_htaccess
+        restore_litespeed_conf
         ;;
     *)
         echo "❌ Неизвестный тип восстановления: $RESTORE_TYPE"
-        echo "Использование: $0 [wp|db|plugins|uploads|theme|all]"
+        echo "Использование: $0 [wp|db|plugins|uploads|theme|flatsome|muplugins|fonts|languages|htaccess|litespeed|all]"
         exit 1
         ;;
 esac

@@ -74,7 +74,71 @@ if [ -d "/var/www/html/wp-content/themes/flatsome-child" ]; then
     tar -czf "$BACKUP_DIR/flatsome-child-$DATE.tar.gz" flatsome-child/ 2>&1 | tee -a "$LOG_FILE"
     ln -sf "flatsome-child-$DATE.tar.gz" "$BACKUP_DIR/flatsome-child-latest.tar.gz"
     SIZE=$(du -h "$BACKUP_DIR/flatsome-child-$DATE.tar.gz" | cut -f1)
-    echo "✅ Бэкап темы создан: flatsome-child-$DATE.tar.gz ($SIZE)" | tee -a "$LOG_FILE"
+    echo "✅ Бэкап дочерней темы создан: flatsome-child-$DATE.tar.gz ($SIZE)" | tee -a "$LOG_FILE"
+fi
+
+# 6. Бэкап родительской темы Flatsome
+if [ -d "/var/www/html/wp-content/themes/flatsome" ]; then
+    echo "" | tee -a "$LOG_FILE"
+    echo "=== Бэкап родительской темы Flatsome ===" | tee -a "$LOG_FILE"
+    cd /var/www/html/wp-content/themes
+    tar -czf "$BACKUP_DIR/flatsome-$DATE.tar.gz" flatsome/ 2>&1 | tee -a "$LOG_FILE"
+    ln -sf "flatsome-$DATE.tar.gz" "$BACKUP_DIR/flatsome-latest.tar.gz"
+    SIZE=$(du -h "$BACKUP_DIR/flatsome-$DATE.tar.gz" | cut -f1)
+    echo "✅ Бэкап родительской темы создан: flatsome-$DATE.tar.gz ($SIZE)" | tee -a "$LOG_FILE"
+fi
+
+# 7. Бэкап mu-plugins
+if [ -d "/var/www/html/wp-content/mu-plugins" ]; then
+    echo "" | tee -a "$LOG_FILE"
+    echo "=== Бэкап mu-plugins ===" | tee -a "$LOG_FILE"
+    cd /var/www/html/wp-content
+    tar -czf "$BACKUP_DIR/mu-plugins-$DATE.tar.gz" mu-plugins/ 2>&1 | tee -a "$LOG_FILE"
+    ln -sf "mu-plugins-$DATE.tar.gz" "$BACKUP_DIR/mu-plugins-latest.tar.gz"
+    SIZE=$(du -h "$BACKUP_DIR/mu-plugins-$DATE.tar.gz" | cut -f1)
+    echo "✅ Бэкап mu-plugins создан: mu-plugins-$DATE.tar.gz ($SIZE)" | tee -a "$LOG_FILE"
+fi
+
+# 8. Бэкап шрифтов
+if [ -d "/var/www/html/wp-content/fonts" ]; then
+    echo "" | tee -a "$LOG_FILE"
+    echo "=== Бэкап шрифтов ===" | tee -a "$LOG_FILE"
+    cd /var/www/html/wp-content
+    tar -czf "$BACKUP_DIR/fonts-$DATE.tar.gz" fonts/ 2>&1 | tee -a "$LOG_FILE"
+    ln -sf "fonts-$DATE.tar.gz" "$BACKUP_DIR/fonts-latest.tar.gz"
+    SIZE=$(du -h "$BACKUP_DIR/fonts-$DATE.tar.gz" | cut -f1)
+    echo "✅ Бэкап шрифтов создан: fonts-$DATE.tar.gz ($SIZE)" | tee -a "$LOG_FILE"
+fi
+
+# 9. Бэкап переводов
+if [ -d "/var/www/html/wp-content/languages" ]; then
+    echo "" | tee -a "$LOG_FILE"
+    echo "=== Бэкап переводов ===" | tee -a "$LOG_FILE"
+    cd /var/www/html/wp-content
+    tar -czf "$BACKUP_DIR/languages-$DATE.tar.gz" languages/ 2>&1 | tee -a "$LOG_FILE"
+    ln -sf "languages-$DATE.tar.gz" "$BACKUP_DIR/languages-latest.tar.gz"
+    SIZE=$(du -h "$BACKUP_DIR/languages-$DATE.tar.gz" | cut -f1)
+    echo "✅ Бэкап переводов создан: languages-$DATE.tar.gz ($SIZE)" | tee -a "$LOG_FILE"
+fi
+
+# 10. Бэкап .htaccess
+if [ -f "/var/www/html/.htaccess" ]; then
+    echo "" | tee -a "$LOG_FILE"
+    echo "=== Бэкап .htaccess ===" | tee -a "$LOG_FILE"
+    cp /var/www/html/.htaccess "$BACKUP_DIR/htaccess-$DATE.txt"
+    ln -sf "htaccess-$DATE.txt" "$BACKUP_DIR/htaccess-latest.txt"
+    SIZE=$(du -h "$BACKUP_DIR/htaccess-$DATE.txt" | cut -f1)
+    echo "✅ Бэкап .htaccess создан: htaccess-$DATE.txt ($SIZE)" | tee -a "$LOG_FILE"
+fi
+
+# 11. Бэкап .litespeed_conf.dat
+if [ -f "/var/www/html/wp-content/.litespeed_conf.dat" ]; then
+    echo "" | tee -a "$LOG_FILE"
+    echo "=== Бэкап конфигурации LiteSpeed Cache ===" | tee -a "$LOG_FILE"
+    cp /var/www/html/wp-content/.litespeed_conf.dat "$BACKUP_DIR/litespeed_conf-$DATE.dat"
+    ln -sf "litespeed_conf-$DATE.dat" "$BACKUP_DIR/litespeed_conf-latest.dat"
+    SIZE=$(du -h "$BACKUP_DIR/litespeed_conf-$DATE.dat" | cut -f1)
+    echo "✅ Бэкап LiteSpeed конфига создан: litespeed_conf-$DATE.dat ($SIZE)" | tee -a "$LOG_FILE"
 fi
 
 echo "" | tee -a "$LOG_FILE"
@@ -84,4 +148,4 @@ echo "📁 Все файлы в: $BACKUP_DIR" | tee -a "$LOG_FILE"
 # Показываем размер всех бэкапов
 echo "" | tee -a "$LOG_FILE"
 echo "=== Размеры бэкапов ===" | tee -a "$LOG_FILE"
-du -h "$BACKUP_DIR"/*.gz "$BACKUP_DIR"/*.enc 2>/dev/null | tee -a "$LOG_FILE"
+du -h "$BACKUP_DIR"/*-latest.* 2>/dev/null | tee -a "$LOG_FILE"

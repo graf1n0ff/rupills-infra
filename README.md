@@ -62,10 +62,17 @@ docker-compose up -d
 │   ├── backup-all.sh       # Полный бэкап
 │   └── restore.sh          # Восстановление из бэкапов
 ├── html/                   # WordPress файлы
+│   ├── .htaccess           # Правила редиректов и LiteSpeed Cache
 │   ├── wp-content/
+│   │   ├── .litespeed_conf.dat  # Конфигурация LiteSpeed Cache
 │   │   ├── themes/
-│   │   │   └── flatsome-child/  # Кастомная тема (в Git)
-│   │   └── plugins/              # Плагины (НЕ в Git)
+│   │   │   ├── flatsome/        # Родительская тема (бэкап)
+│   │   │   └── flatsome-child/  # Дочерняя тема (в Git)
+│   │   ├── plugins/              # Плагины (бэкап)
+│   │   ├── mu-plugins/           # Must-use плагины (бэкап)
+│   │   ├── fonts/                # Кастомные шрифты (бэкап)
+│   │   ├── languages/            # Переводы (бэкап)
+│   │   └── uploads/              # Загрузки (бэкап)
 │   └── backup-download.php # Веб-интерфейс для скачивания бэкапов
 └── backups/                # Директория для бэкапов
 ```
@@ -87,7 +94,13 @@ docker-compose up -d
 - Плагины (plugins-latest.tar.gz)
 - Uploads (uploads-latest.tar.gz)
 - wp-config.php (wp-config-latest.enc - зашифрован)
-- Тема flatsome-child (flatsome-child-latest.tar.gz)
+- Дочерняя тема flatsome-child (flatsome-child-latest.tar.gz)
+- Родительская тема Flatsome (flatsome-latest.tar.gz)
+- Must-use плагины (mu-plugins-latest.tar.gz)
+- Кастомные шрифты (fonts-latest.tar.gz)
+- Переводы WordPress (languages-latest.tar.gz)
+- Файл .htaccess (htaccess-latest.txt)
+- Конфигурация LiteSpeed Cache (litespeed_conf-latest.dat)
 
 ### Ручной бэкап
 
@@ -180,8 +193,26 @@ docker-compose exec web chown -R lsadm:lsadm /var/www/html
 # Только uploads
 ./scripts/restore.sh uploads
 
-# Только тема
+# Только дочерняя тема
 ./scripts/restore.sh theme
+
+# Только родительская тема Flatsome
+./scripts/restore.sh flatsome
+
+# Только mu-plugins
+./scripts/restore.sh muplugins
+
+# Только шрифты
+./scripts/restore.sh fonts
+
+# Только переводы
+./scripts/restore.sh languages
+
+# Только .htaccess
+./scripts/restore.sh htaccess
+
+# Только конфигурация LiteSpeed
+./scripts/restore.sh litespeed
 ```
 
 ## 🐳 Docker команды
