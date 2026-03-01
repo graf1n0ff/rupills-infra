@@ -1,5 +1,60 @@
 <?php
 // Add custom Theme Functions here
+
+// Хелпер: получает бренд товара (Brand → Manufacturer → WPML cross-language fallback)
+function rupills_get_product_brand( $product ) {
+    if ( ! $product ) return '';
+    $lang = apply_filters( 'wpml_current_language', 'en' );
+
+    // 1) Прямой атрибут Brand / Бренд
+    $brand = ( $lang === 'en' )
+        ? $product->get_attribute( 'Brand' )
+        : $product->get_attribute( 'Бренд' );
+    if ( ! empty( $brand ) ) return $brand;
+
+    // 2) Фоллбек: Manufacturer / Производитель → берём компанию до запятой
+    $manufacturer = ( $lang === 'en' )
+        ? $product->get_attribute( 'Manufacturer' )
+        : $product->get_attribute( 'Производитель' );
+    if ( ! empty( $manufacturer ) ) {
+        $brand = rupills_extract_company_from_manufacturer( $manufacturer );
+        if ( ! empty( $brand ) ) return $brand;
+    }
+
+    // 3) WPML: если у текущей языковой версии пусто — берём из другой
+    if ( function_exists( 'icl_object_id' ) ) {
+        $other_lang  = ( $lang === 'en' ) ? 'ru' : 'en';
+        $other_id    = icl_object_id( $product->get_id(), 'product', false, $other_lang );
+        if ( $other_id && $other_id !== $product->get_id() ) {
+            $other_product = wc_get_product( $other_id );
+            if ( $other_product ) {
+                $brand = ( $other_lang === 'en' )
+                    ? $other_product->get_attribute( 'Brand' )
+                    : $other_product->get_attribute( 'Бренд' );
+                if ( ! empty( $brand ) ) return $brand;
+
+                $mfr = ( $other_lang === 'en' )
+                    ? $other_product->get_attribute( 'Manufacturer' )
+                    : $other_product->get_attribute( 'Производитель' );
+                if ( ! empty( $mfr ) ) {
+                    $brand = rupills_extract_company_from_manufacturer( $mfr );
+                    if ( ! empty( $brand ) ) return $brand;
+                }
+            }
+        }
+    }
+
+    return '';
+}
+
+function rupills_extract_company_from_manufacturer( $manufacturer ) {
+    $parts   = explode( ',', $manufacturer );
+    $company = trim( $parts[0] );
+    $skip    = array( 'Russia', 'Israel', 'India', 'USA', 'China', 'Germany',
+        'Россия', 'Израиль', 'Индия', 'США', 'Китай', 'Германия' );
+    if ( in_array( $company, $skip, true ) ) return '';
+    return $company;
+}
 /*
 // картинка по умолчанию, когда нет фото, сначала загрузить через стандартное добавление фото
 add_action( 'init', 'custom_fix_thumbnail' );
@@ -156,20 +211,124 @@ function action_function_name_9670( $order_id ){
 }
 /*----------------------------------------------------*/
 
-/*---------- Отключает проверки WPML и поиск работает на всех языках -----------------*/
-add_action('pre_get_posts', 'my_custom_search_query', 1);
-function my_custom_search_query($query)
-{
-    if($query->is_search()) 
-    {
-        $query->query_vars['suppress_filters'] = true;
-        return $query;
-    }
+/*---------- Отключает проверки WPML: поиск и список заказов работают на всех языках ---*/
+add_action( 'pre_get_posts', 'rupills_woo_orders_admin_all_languages', 1 );
+function rupills_woo_orders_admin_all_languages( $query ) {
+	if ( ! is_admin() ) {
+		return;
+	}
+	$post_type = $query->get( 'post_type' );
+	// Список заказов (с поиском и без) — показывать заказы всех языков
+	if ( $post_type === 'shop_order' ) {
+		$query->set( 'suppress_filters', true );
+		return;
+	}
+	// Остальной поиск (товары, посты и т.д.) — без фильтра по языку
+	if ( $query->is_search() ) {
+		$query->set( 'suppress_filters', true );
+	}
+}
+
+/*---------- Поиск заказов по названиям товаров на всех языках WPML ----------------*/
+if ( ! function_exists( 'rupills_wpml_product_titles_for_order_search' ) ) {
+	/**
+	 * Собирает все варианты названий товаров (по языкам WPML) для поиска заказов.
+	 * Если искать "Dikul", вернёт ["Dikul","Дикуль"] и наоборот.
+	 */
+	function rupills_wpml_product_titles_for_order_search( $term ) {
+		$term = wc_clean( $term );
+		if ( empty( $term ) || strlen( $term ) < 2 ) {
+			return array( $term );
+		}
+		if ( ! function_exists( 'icl_object_id' ) || ! defined( 'ICL_SITEPRESS_VERSION' ) ) {
+			return array( $term );
+		}
+		global $wpdb;
+		$tr_ids_table = $wpdb->prefix . 'icl_translations';
+		$like         = '%' . $wpdb->esc_like( $term ) . '%';
+
+		// trid всех товаров, у которых title (в любом языке) содержит термин
+		$trids = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT DISTINCT t.trid
+				FROM {$wpdb->posts} p
+				INNER JOIN {$tr_ids_table} t ON t.element_id = p.ID AND t.element_type = 'post_product'
+				WHERE p.post_type = 'product' AND p.post_status IN ('publish','private','draft')
+				AND p.post_title LIKE %s",
+				$like
+			)
+		);
+		if ( empty( $trids ) ) {
+			return array( $term );
+		}
+		$trids_placeholders = implode( ',', array_fill( 0, count( $trids ), '%d' ) );
+
+		// Все post_title товаров из этих trid (все языки)
+		$titles = $wpdb->get_col(
+			$wpdb->prepare(
+				"SELECT DISTINCT p.post_title
+				FROM {$wpdb->posts} p
+				INNER JOIN {$tr_ids_table} t ON t.element_id = p.ID AND t.element_type = 'post_product'
+				WHERE t.trid IN ({$trids_placeholders})
+				AND p.post_title != ''",
+				...$trids
+			)
+		);
+		if ( empty( $titles ) ) {
+			return array( $term );
+		}
+		$titles = array_map( 'wc_clean', array_filter( array_unique( $titles ) ) );
+		$all    = array_unique( array_merge( array( $term ), $titles ) );
+		return array_slice( $all, 0, 25 );
+	}
+}
+
+add_filter( 'woocommerce_shop_order_search_results', 'rupills_woo_order_search_add_wpml_product_names', 10, 3 );
+function rupills_woo_order_search_add_wpml_product_names( $order_ids, $term, $search_fields ) {
+	$titles = rupills_wpml_product_titles_for_order_search( $term );
+	if ( count( $titles ) <= 1 ) {
+		return $order_ids;
+	}
+	global $wpdb;
+	$order_items_table = $wpdb->prefix . 'woocommerce_order_items';
+	$parts            = array();
+	$values           = array();
+	foreach ( $titles as $i => $t ) {
+		if ( $t === $term ) {
+			continue;
+		}
+		$parts[]  = 'order_item_name LIKE %s';
+		$values[] = '%' . $wpdb->esc_like( $t ) . '%';
+	}
+	if ( empty( $parts ) ) {
+		return $order_ids;
+	}
+	$sql    = "SELECT order_id FROM {$order_items_table} WHERE " . implode( ' OR ', $parts );
+	$extra  = $wpdb->get_col( $wpdb->prepare( $sql, ...$values ) );
+	$merged = array_unique( array_merge( array_map( 'intval', (array) $order_ids ), array_map( 'absint', $extra ) ) );
+	return array_values( $merged );
+}
+
+add_filter( 'woocommerce_cot_shop_order_search_results', 'rupills_woo_order_search_add_wpml_product_names_cot', 10, 2 );
+function rupills_woo_order_search_add_wpml_product_names_cot( $order_ids, $term ) {
+	$titles = rupills_wpml_product_titles_for_order_search( $term );
+	if ( count( $titles ) <= 1 ) {
+		return $order_ids;
+	}
+	$found = array_map( 'intval', (array) $order_ids );
+	foreach ( $titles as $t ) {
+		if ( $t === $term ) {
+			continue;
+		}
+		$more = wc_get_orders( array( 's' => $t, 'return' => 'ids', 'limit' => 500 ) );
+		$found = array_unique( array_merge( $found, array_map( 'intval', (array) $more ) ) );
+	}
+	return array_values( $found );
 }
 //-----------
 
 /* --------------- включение кеширования Sitemap -----------------*/
-//add_filter( 'wpseo_enable_xml_sitemap_transient_caching', '__return_true' );
+add_filter( 'wpseo_enable_xml_sitemap_transient_caching', '__return_true' );
 /* --------------- включение кеширования Sitemap -----------------*/
 
 /* не более 10 позиций в одном заказе */
@@ -228,7 +387,7 @@ add_action( 'woocommerce_no_products_found', function(){
 <li>Попробуйте ввести запрос на другом языке — возможно, произошла ошибка перевода.</li>
 <li>Попробуйте упростить запрос: «боль в спине» вместо «мазь от боли в спине».</li>
 <li>📱 Некоторые товары доступны <strong>эксклюзивно в нашем приложении</strong>. <a href="/app/">Установите приложение Ru-Pills</a>, чтобы получить доступ к полному каталогу!</li>
-<li>Если нужна помощь, напишите в <!--noindex--><a href="https://t.me/Ru_pills" rel="nofollow">Telegram +447473598828</a><!--/noindex--></li></ul>';
+<li>Если нужна помощь, напишите в <!--noindex--><a href="https://t.me/Ru_pills" rel="nofollow">Telegram @Ru_pills</a><!--/noindex--></li></ul>';
   } else {
     $message = '
 <h2>🤷‍♂️ Nothing was found by the query</h2>
@@ -237,10 +396,17 @@ add_action( 'woocommerce_no_products_found', function(){
 <li>Try typing in another language, perhaps a translation error.</li>
 <li>Try simplifying your query: "back pain" instead of "back pain ointment".</li>
 <li>📱 Some products are <strong>exclusively available in our app</strong>. <a href="/app/">Install the Ru-Pills app</a> to access the full catalog!</li>
-<li>If you need help, please write to <!--noindex--><a href="https://t.me/Ru_pills" rel="nofollow">Telegram +447473598828</a><!--/noindex--></li></ul>';
+<li>If you need help, please write to <!--noindex--><a href="https://t.me/Ru_pills" rel="nofollow">Telegram @Ru_pills</a><!--/noindex--></li></ul>';
   }
 
   echo '<p class="woocommerce-info">' . $message . '</p>';
+
+  if ( function_exists( 'relevanssi_didyoumean' ) ) {
+      $search_query = get_search_query();
+      $lang         = apply_filters( 'wpml_current_language', 'en' );
+      $pre_text     = ( $lang === 'ru' ) ? 'Возможно, вы искали: ' : 'Did you mean: ';
+      relevanssi_didyoumean( $search_query, '<p class="relevanssi-didyoumean" style="font-size:1.1em;margin:1em 0;">' . $pre_text, '</p>', 5, true );
+  }
 }, 9 );
 /* Меняет сообщение когда товары не найдены */
 
@@ -287,24 +453,109 @@ class iWC_Orderby_Stock_Status{
   
   // ************* товары которых нет в наличии отправлять вниз **************
 
-  // ----------------- кликабельный URL на почту для фото ---------------------
+// ----------------- кликабельный URL на почту для фото ---------------------
 add_action( 'woocommerce_admin_order_data_after_shipping_address', 'admin_custom_row_after_order_addresses', 10, 1 );
 function admin_custom_row_after_order_addresses( $order ){
-    ?>
-        </div></div>
-        <div class="clear"></div>
-        <!-- new custom section row -->
-        <div class="order_data_column_container">
-            <div class="order_data_column_wide">
-                <h3><?php 
-				global $woocommerce;
-				$data = $order->get_data();
-				echo '<a href="mailto:'.$data['billing']['email'].'?subject=[Ru-Pills.com] Photo of your order #'.$order->get_id().'&body=Hello%2C%20'.$order->billing_first_name.'%21%0AYour%20order%20is%20ready%20to%20be%20shipped.%20A%20picture%20of%20your%20order%20is%20attached%20to%20this%20email.%20A%20follow%20up%20email%20with%20a%20tracking%20number%20will%20be%20sent%20to%20you%20shortly.%0AThank%20you%20so%20much%20for%20making%20a%20purchase%20from%20us.%20%0ATeam%20Ru-Pills.com%0A----------%0A%D0%97%D0%B4%D1%80%D0%B0%D0%B2%D1%81%D1%82%D0%B2%D1%83%D0%B9%D1%82%D0%B5%2C%20'.$order->billing_first_name.'%21%0A%D0%92%D0%B0%D1%88%20%D0%B7%D0%B0%D0%BA%D0%B0%D0%B7%20%D0%B3%D0%BE%D1%82%D0%BE%D0%B2%20%D0%BA%20%D0%BE%D1%82%D0%BF%D1%80%D0%B0%D0%B2%D0%BA%D0%B5.%20%D0%A4%D0%BE%D1%82%D0%BE%D0%B3%D1%80%D0%B0%D1%84%D0%B8%D1%8F%20%D0%B2%D0%B0%D1%88%D0%B5%D0%B3%D0%BE%20%D0%B7%D0%B0%D0%BA%D0%B0%D0%B7%D0%B0%20%D0%BF%D1%80%D0%B8%D0%BA%D1%80%D0%B5%D0%BF%D0%BB%D0%B5%D0%BD%D0%B0%20%D0%BA%20%D1%8D%D1%82%D0%BE%D0%BC%D1%83%20%D0%BF%D0%B8%D1%81%D1%8C%D0%BC%D1%83.%20%D0%9F%D0%BE%D1%81%D0%BB%D0%B5%D0%B4%D1%83%D1%8E%D1%89%D0%B5%D0%B5%20%D0%BF%D0%B8%D1%81%D1%8C%D0%BC%D0%BE%20%D1%81%20%D0%BD%D0%BE%D0%BC%D0%B5%D1%80%D0%BE%D0%BC%20%D0%B4%D0%BB%D1%8F%20%D0%BE%D1%82%D1%81%D0%BB%D0%B5%D0%B6%D0%B8%D0%B2%D0%B0%D0%BD%D0%B8%D1%8F%20%D0%B1%D1%83%D0%B4%D0%B5%D1%82%20%D0%BE%D1%82%D0%BF%D1%80%D0%B0%D0%B2%D0%BB%D0%B5%D0%BD%D0%BE%20%D0%B2%D0%B0%D0%BC%20%D0%B2%20%D0%B1%D0%BB%D0%B8%D0%B6%D0%B0%D0%B9%D1%88%D0%B5%D0%B5%20%D0%B2%D1%80%D0%B5%D0%BC%D1%8F.%0A%D0%91%D0%BE%D0%BB%D1%8C%D1%88%D0%BE%D0%B5%20%D1%81%D0%BF%D0%B0%D1%81%D0%B8%D0%B1%D0%BE%20%D0%B7%D0%B0%20%D1%82%D0%BE%2C%20%D1%87%D1%82%D0%BE%20%D1%81%D0%B4%D0%B5%D0%BB%D0%B0%D0%BB%D0%B8%20%D0%BF%D0%BE%D0%BA%D1%83%D0%BF%D0%BA%D1%83%20%D1%83%20%D0%BD%D0%B0%D1%81.%20%0A%D0%9A%D0%BE%D0%BC%D0%B0%D0%BD%D0%B4%D0%B0%20Ru-Pills.com">
-  Фото на почту '.$data['billing']['email'].'</a>';
-				?></h3>
-                <!-- custom row paragraph -->
-                
-    <?php
+	$order_id   = $order->get_id();
+	$email      = $order->get_billing_email();
+	$first_name = $order->get_billing_first_name();
+
+	$lang = $order->get_meta( 'wpml_language' );
+	if ( empty( $lang ) ) {
+		$lang = get_post_meta( $order_id, 'wpml_language', true );
+	}
+	if ( empty( $lang ) ) {
+		$lang = 'en';
+	}
+
+	if ( $lang === 'ru' ) {
+		$subject = '[Ru-Pills.com] Ваш заказ #' . $order_id . ' готов к отправке';
+		$body = "Здравствуйте, {$first_name}!\n\nВаш заказ готов к отправке. Фотография вашего заказа прикреплена к этому письму. Последующее письмо с номером для отслеживания будет отправлено вам в ближайшее время.\n\nБольшое спасибо за то, что сделали покупку у нас.\nКоманда Ru-Pills.com";
+	} else {
+		$subject = '[Ru-Pills.com] Your order #' . $order_id . ' is ready to ship';
+		$body = "Hello, {$first_name}!\n\nYour order is ready to be shipped. A picture of your order is attached to this email. A follow up email with a tracking number will be sent to you shortly.\n\nThank you so much for making a purchase from us.\nTeam Ru-Pills.com";
+	}
+
+	$mailto     = 'mailto:' . esc_attr( $email ) . '?subject=' . rawurlencode( $subject ) . '&body=' . rawurlencode( $body );
+	$photo_sent = $order->get_meta( '_photo_sent' );
+	$sent_label = '';
+	if ( $photo_sent ) {
+		$sent_label = '<span style="color:#28a745;font-weight:600;margin-left:10px;">📷 Отправлено ' . esc_html( $photo_sent ) . '</span>';
+	}
+	?>
+	</div></div>
+	<div class="clear"></div>
+	<div class="order_data_column_container">
+		<div class="order_data_column_wide">
+			<h3>
+				<a href="<?php echo esc_url( $mailto ); ?>"
+				   id="rupills-photo-mail-link"
+				   data-order-id="<?php echo esc_attr( $order_id ); ?>"
+				   data-nonce="<?php echo esc_attr( wp_create_nonce( 'rupills_photo_sent_' . $order_id ) ); ?>"
+				   ><?php echo $photo_sent ? '📷 Фото на почту' : 'Фото на почту'; ?> <?php echo esc_html( $email ); ?></a>
+				<?php echo $sent_label; ?>
+			</h3>
+	<?php
+}
+
+add_action( 'admin_footer', 'rupills_photo_sent_js' );
+function rupills_photo_sent_js() {
+	$screen = get_current_screen();
+	if ( ! $screen ) return;
+	if ( $screen->id !== 'shop_order' && $screen->id !== 'woocommerce_page_wc-orders' ) return;
+	?>
+	<script>
+	(function(){
+		var link = document.getElementById('rupills-photo-mail-link');
+		if (!link) return;
+		link.addEventListener('click', function(e){
+			e.preventDefault();
+			var href = this.href;
+			var orderId = this.dataset.orderId;
+			var nonce = this.dataset.nonce;
+			fetch(ajaxurl, {
+				method: 'POST',
+				headers: {'Content-Type':'application/x-www-form-urlencoded'},
+				body: 'action=rupills_mark_photo_sent&order_id=' + orderId + '&nonce=' + nonce
+			}).then(function(r){ return r.json(); }).then(function(data){
+				if (data.success) {
+					var span = link.parentNode.querySelector('span');
+					if (!span) {
+						span = document.createElement('span');
+						span.style.cssText = 'color:#28a745;font-weight:600;margin-left:10px;';
+						link.parentNode.appendChild(span);
+					}
+					span.textContent = '📷 Отправлено ' + data.data.date;
+					link.textContent = '📷 Фото на почту ' + link.textContent.replace(/^📷\s*/, '').replace(/^Фото на почту\s*/, '');
+				}
+				window.location.href = href;
+			}).catch(function(){
+				window.location.href = href;
+			});
+		});
+	})();
+	</script>
+	<?php
+}
+
+add_action( 'wp_ajax_rupills_mark_photo_sent', 'rupills_mark_photo_sent_ajax' );
+function rupills_mark_photo_sent_ajax() {
+	$order_id = isset( $_POST['order_id'] ) ? absint( $_POST['order_id'] ) : 0;
+	$nonce    = isset( $_POST['nonce'] ) ? sanitize_text_field( $_POST['nonce'] ) : '';
+	if ( ! $order_id || ! wp_verify_nonce( $nonce, 'rupills_photo_sent_' . $order_id ) ) {
+		wp_send_json_error( 'invalid nonce' );
+	}
+	if ( ! current_user_can( 'edit_shop_orders' ) ) {
+		wp_send_json_error( 'no permission' );
+	}
+	$order = wc_get_order( $order_id );
+	if ( ! $order ) {
+		wp_send_json_error( 'order not found' );
+	}
+	$now = current_time( 'd.m.Y H:i' );
+	$order->update_meta_data( '_photo_sent', $now );
+	$order->save();
+	wp_send_json_success( array( 'date' => $now ) );
 }
 // ----------------- кликабельный URL на почту для фото ---------------------
 
@@ -368,35 +619,95 @@ function styling_admin_order_list() {
 add_action("woocommerce_order_status_changed", "my_custom_notification");
 
 function my_custom_notification($order_id, $checkout=null) {
-   global $woocommerce;
-   $order = new WC_Order( $order_id );
-   if($order->status === 'reserved' ) {
-      // Create a mailer
-      $mailer = $woocommerce->mailer();
+   $order = wc_get_order($order_id);
+   if ( ! $order || $order->get_status() !== 'reserved' ) {
+      return;
+   }
 
-      $message_body = __( 'Hello '.$order->billing_first_name.'!
-Your order has left the pharmacy and handed over to the packaging.
-The average time for packing a parcel is 1-3 business days, but it may be longer if you have a lot of items in your order or a heavy load of the packing department.
-Please expect an email with a photo of the order and track number.
-Please note from this moment the order cannot be canceled.<br/>
-------------<br/>
-Здравствуйте, '.$order->billing_first_name.'!
-        Ваш заказ покинул аптеку и передан на упаковку.
-        Среднее время упаковки посылки составляет 1-3 рабочих дня, но оно может быть больше, если в вашем заказе много позиций или большая загрузка отдела упаковки.
-        Пожалуйста, ожидайте письмо с фотографией заказа и трек-номером.
-        Обратите внимание, что с этого момента заказ не может быть отменен.
-' ); 
+   $lang = $order->get_meta('wpml_language');
+   if ( empty( $lang ) ) {
+      $lang = get_post_meta( $order_id, 'wpml_language', true );
+   }
+   if ( empty( $lang ) ) {
+      $lang = 'en';
+   }
 
+   $mailer = WC()->mailer();
+   $order_number = $order->get_order_number();
+   $first_name  = $order->get_billing_first_name();
 
+   if ( $lang === 'ru' ) {
+      $subject = sprintf( '[Ru-Pills.com] Заказ #%s передан на упаковку', $order_number );
+      $heading = sprintf( 'Заказ #%s передан на упаковку', $order_number );
+      $message_body = sprintf(
+         '<p style="font-size:15px;color:#333;line-height:1.6;margin:0 0 16px;">Здравствуйте, <strong>%s</strong>!</p>'
 
-      $message = $mailer->wrap_message(
-        // Message head and message body.
-        sprintf( __( 'Your order #%s is being packed' ), $order->get_order_number() ), $message_body );
+         . '<div style="background:#eaf7ec;border-left:4px solid #4caf50;padding:14px 18px;border-radius:4px;margin-bottom:20px;">'
+         .   '<p style="margin:0;font-size:15px;color:#2e7d32;line-height:1.5;">'
+         .     '&#10003; Ваш заказ <strong>#%s</strong> покинул аптеку и передан в отдел упаковки.'
+         .   '</p>'
+         . '</div>'
 
-      // Cliente email, email subject and message.
-     $mailer->send( $order->billing_email, sprintf( __( '[Ru-Pills.com] Your order #%s is being packed' ), $order->get_order_number() ), $message );
-     }
-	 
+         . '<div style="background:#fff3e0;border-left:4px solid #ff9800;padding:14px 18px;border-radius:4px;margin-bottom:20px;">'
+         .   '<p style="margin:0 0 6px;font-size:14px;color:#e65100;line-height:1.5;font-weight:bold;">'
+         .     '&#9888; Важная информация'
+         .   '</p>'
+         .   '<p style="margin:0;font-size:14px;color:#555;line-height:1.5;">'
+         .     'С этого момента заказ находится в работе — <strong>отменить, изменить состав или адрес доставки уже невозможно</strong>.'
+         .   '</p>'
+         . '</div>'
+
+         . '<div style="background:#e3f2fd;border-left:4px solid #2196f3;padding:14px 18px;border-radius:4px;margin-bottom:20px;">'
+         .   '<p style="margin:0 0 6px;font-size:14px;color:#1565c0;line-height:1.5;font-weight:bold;">'
+         .     '&#128230; Что дальше?'
+         .   '</p>'
+         .   '<p style="margin:0;font-size:14px;color:#555;line-height:1.5;">'
+         .     'Как только заказ будет упакован и передан в службу доставки, мы отправим вам письмо '
+         .     'с <strong>фотографией товаров</strong> и <strong>трек-номером</strong> для отслеживания.'
+         .   '</p>'
+         . '</div>'
+
+         ,
+         $first_name, $order_number
+      );
+   } else {
+      $subject = sprintf( '[Ru-Pills.com] Order #%s is being packed', $order_number );
+      $heading = sprintf( 'Order #%s is being packed', $order_number );
+      $message_body = sprintf(
+         '<p style="font-size:15px;color:#333;line-height:1.6;margin:0 0 16px;">Hello, <strong>%s</strong>!</p>'
+
+         . '<div style="background:#eaf7ec;border-left:4px solid #4caf50;padding:14px 18px;border-radius:4px;margin-bottom:20px;">'
+         .   '<p style="margin:0;font-size:15px;color:#2e7d32;line-height:1.5;">'
+         .     '&#10003; Your order <strong>#%s</strong> has left the pharmacy and has been handed over to the packing department.'
+         .   '</p>'
+         . '</div>'
+
+         . '<div style="background:#fff3e0;border-left:4px solid #ff9800;padding:14px 18px;border-radius:4px;margin-bottom:20px;">'
+         .   '<p style="margin:0 0 6px;font-size:14px;color:#e65100;line-height:1.5;font-weight:bold;">'
+         .     '&#9888; Important notice'
+         .   '</p>'
+         .   '<p style="margin:0;font-size:14px;color:#555;line-height:1.5;">'
+         .     'Your order is now being processed — <strong>it can no longer be cancelled, modified, or have its delivery address changed</strong>.'
+         .   '</p>'
+         . '</div>'
+
+         . '<div style="background:#e3f2fd;border-left:4px solid #2196f3;padding:14px 18px;border-radius:4px;margin-bottom:20px;">'
+         .   '<p style="margin:0 0 6px;font-size:14px;color:#1565c0;line-height:1.5;font-weight:bold;">'
+         .     '&#128230; What happens next?'
+         .   '</p>'
+         .   '<p style="margin:0;font-size:14px;color:#555;line-height:1.5;">'
+         .     'Once your order is packed and handed over to the shipping carrier, we will send you an email '
+         .     'with a <strong>photo of the items</strong> and a <strong>tracking number</strong>.'
+         .   '</p>'
+         . '</div>'
+
+         ,
+         $first_name, $order_number
+      );
+   }
+
+   $message = $mailer->wrap_message( $heading, $message_body );
+   $mailer->send( $order->get_billing_email(), $subject, $message );
 }
 //-------------- email о смене статуса заказа ------------------ //
 
@@ -636,15 +947,35 @@ function sort_by_stock_status_and_date( $query ) {
 
 
 
-//-------- текст на странице товара
+//-------- текст на странице товара (SEO-оптимизированный: бренд + категория + доставка)
 add_action( 'woocommerce_after_single_product', 'wpbl_example_hook', 20 );
 
-function wpbl_example_hook(){ 
-    $my_name_product = get_the_title( get_the_ID() ); // Получаем название текущего товара
+function wpbl_example_hook() {
+    $product = wc_get_product( get_the_ID() );
+    if ( ! $product ) return;
 
-    echo '<p align="center" style="margin: 0px 5px 0px 5px;">
-       <strong>' . __('Buy', 'my_text_functions') . ' ' . $my_name_product . '</strong> ' . __('with delivery to USA, UK, Europe and over 120 other countries.', 'my_text_functions') . '
-    </p>';
+    $title = $product->get_name();
+    $lang  = apply_filters( 'wpml_current_language', 'en' );
+    $brand = rupills_get_product_brand( $product );
+
+    $cats     = wp_get_post_terms( $product->get_id(), 'product_cat', array( 'fields' => 'names' ) );
+    $category = ( ! is_wp_error( $cats ) && ! empty( $cats ) ) ? $cats[0] : '';
+
+    if ( $lang === 'ru' ) {
+        $text = '<strong>Купить ' . esc_html( $title ) . '</strong>';
+        if ( $brand ) $text .= ' от ' . esc_html( $brand );
+        $text .= ' в интернет-аптеке Ru-Pills.com.';
+        if ( $category ) $text .= ' ' . esc_html( $category ) . ' —';
+        $text .= ' доставка в США, Великобританию, Европу и более 120 стран мира.';
+    } else {
+        $text = '<strong>Buy ' . esc_html( $title ) . '</strong>';
+        if ( $brand ) $text .= ' by ' . esc_html( $brand );
+        $text .= ' at Ru-Pills.com online pharmacy.';
+        if ( $category ) $text .= ' ' . esc_html( $category ) . ' —';
+        $text .= ' delivery to USA, UK, Europe and over 120 other countries.';
+    }
+
+    echo '<p style="text-align:center;margin:0 5px;">' . $text . '</p>';
 }
 
 // ------------
@@ -756,28 +1087,21 @@ function wpseo_remove_breadcrumb_link( $links ){
 }
 //-------    
 
-//------- добавляет бренд 
-/*
+//------- добавляет бренд в Product schema (формат @type: Brand для Google Rich Snippets)
 add_filter( 'wpseo_schema_product', 'custom_set_extra_schema' );
 function custom_set_extra_schema( $data ) {
     global $product;
-    
-    //$gtin        = get_post_meta( $product->get_id(), '_custom_gtin', true );
-    //$brand_name  = get_post_meta( $product->get_id(), '_custom_brand_name', true );
-    $my_current_lang = apply_filters('wpml_current_language', NULL);
-//echo $my_current_lang;
-if ($my_current_lang == 'en') {
-  $brand_name = $product->get_attribute('Brand');
-}
-else {
-  $brand_name = $product->get_attribute('Бренд');
-}
-    
-    $data['brand'] = $brand_name;
-    //$data['gtin13'] = $gtin;
-        
+    $brand_name = rupills_get_product_brand( $product );
+
+    if ( ! empty( $brand_name ) ) {
+        $data['brand'] = array(
+            '@type' => 'Brand',
+            'name'  => $brand_name,
+        );
+    }
+
     return $data;
-}*/
+}
 //-----------
  
 
@@ -908,37 +1232,7 @@ add_filter('get_search_form', 'modify_search_form');
 //---------- показываем строку поиска в результатах поиска ------------
 
 
-//---- задача для удаления раз в неделю заброшеных корзин в плагине 
-// Планирование еженедельной задачи очистки
-function schedule_cart_cleanup() {
-  if ( ! as_next_scheduled_action( 'clean_abandoned_cart_weekly' ) ) {
-      as_schedule_recurring_action( time(), WEEK_IN_SECONDS, 'clean_abandoned_cart_weekly' );
-  }
-}
-add_action( 'init', 'schedule_cart_cleanup' );
-
-// Очистка записей старше 7 дней из wp_wacv_abandoned_cart_record
-function clean_abandoned_cart_callback() {
-  global $wpdb;
-
-  // Указываем полное имя таблицы
-  $table_name = $wpdb->prefix . 'wacv_abandoned_cart_record';
-
-  // Удаляем записи старше 7 дней
-  $result = $wpdb->query( "
-      DELETE FROM $table_name
-      WHERE abandoned_time < NOW() - INTERVAL 7 DAY
-  " );
-
-  // Логируем результат (по желанию)
-  if ( $result === false ) {
-      error_log( 'Ошибка при очистке таблицы ' . $table_name );
-  } else {
-      error_log( "Очищено $result записей из таблицы $table_name." );
-  }
-}
-add_action( 'clean_abandoned_cart_weekly', 'clean_abandoned_cart_callback' ); 
-//---- задача для удаления раз в неделю заброшеных корзин в плагине
+// Abandoned cart recovery is now handled by mu-plugins/rupills-abandoned-carts.php
 
 //---- вес товара в админке 
 
@@ -1072,10 +1366,377 @@ add_action('before_delete_post', function($post_id) {
 });
 // удаление фото вместе с удалением товаров
 
-// ============ PWA Support + Install Tracking via dataLayer (GTM) ============
+// ============ Google Analytics 4 (GA4) ============
 
-// 1. PWA meta tags in <head>
-add_action('wp_head', 'rupills_pwa_meta', 1);
+add_action('wp_head', 'rupills_ga4_head', 1);
+function rupills_ga4_head() {
+    $ga_id = 'G-R8LTVK503R';
+    ?>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=<?php echo $ga_id; ?>"></script>
+    <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', '<?php echo $ga_id; ?>', {
+        'send_page_view': true,
+        'cookie_flags': 'SameSite=None;Secure'
+    });
+    </script>
+    <?php
+}
+
+// ============ GA4 E-commerce: view_item (product page) ============
+
+add_action('wp_footer', 'rupills_ga4_view_item', 10);
+function rupills_ga4_view_item() {
+    if ( ! is_product() ) return;
+    $product = wc_get_product( get_the_ID() );
+    if ( ! $product ) return;
+
+    $cats   = wp_get_post_terms( $product->get_id(), 'product_cat', ['fields' => 'names'] );
+    $cat    = ( ! is_wp_error($cats) && ! empty($cats) ) ? $cats[0] : '';
+    $brand  = rupills_get_product_brand( $product );
+    $price  = $product->get_price() ? (float) $product->get_price() : 0;
+    ?>
+    <script>
+    gtag('event', 'view_item', {
+        currency: '<?php echo get_woocommerce_currency(); ?>',
+        value: <?php echo $price; ?>,
+        items: [{
+            item_id: '<?php echo esc_js( $product->get_sku() ?: $product->get_id() ); ?>',
+            item_name: <?php echo wp_json_encode( $product->get_name() ); ?>,
+            item_brand: <?php echo wp_json_encode( $brand ); ?>,
+            item_category: <?php echo wp_json_encode( $cat ); ?>,
+            price: <?php echo $price; ?>,
+            quantity: 1
+        }]
+    });
+    </script>
+    <?php
+}
+
+// ============ GA4 E-commerce: view_item_list (category / shop) ============
+
+add_action('wp_footer', 'rupills_ga4_view_item_list', 10);
+function rupills_ga4_view_item_list() {
+    if ( ! is_shop() && ! is_product_category() && ! is_product_tag() && ! is_search() ) return;
+    global $wp_query;
+    if ( empty($wp_query->posts) ) return;
+
+    $list_name = 'Shop';
+    if ( is_product_category() ) {
+        $list_name = single_term_title('', false);
+    } elseif ( is_search() ) {
+        $list_name = 'Search Results';
+    }
+
+    $items = [];
+    $pos   = 1;
+    foreach ( $wp_query->posts as $post_obj ) {
+        $p = wc_get_product($post_obj->ID);
+        if ( ! $p ) continue;
+        $cats = wp_get_post_terms($p->get_id(), 'product_cat', ['fields' => 'names']);
+        $items[] = [
+            'item_id'       => $p->get_sku() ?: (string) $p->get_id(),
+            'item_name'     => $p->get_name(),
+            'item_brand'    => rupills_get_product_brand($p),
+            'item_category' => ( ! is_wp_error($cats) && ! empty($cats) ) ? $cats[0] : '',
+            'price'         => (float) $p->get_price(),
+            'index'         => $pos++,
+        ];
+        if ($pos > 20) break;
+    }
+    ?>
+    <script>
+    gtag('event', 'view_item_list', {
+        item_list_name: <?php echo wp_json_encode($list_name); ?>,
+        items: <?php echo wp_json_encode($items, JSON_UNESCAPED_UNICODE); ?>
+    });
+    </script>
+    <?php
+}
+
+// ============ GA4 E-commerce: add_to_cart (AJAX + non-AJAX) ============
+
+add_action('wp_footer', 'rupills_ga4_add_to_cart_js', 20);
+function rupills_ga4_add_to_cart_js() {
+    if ( is_admin() ) return;
+    ?>
+    <script data-no-optimize="1">
+    (function(){
+        document.addEventListener('click', function(e) {
+            var btn = e.target.closest('.add_to_cart_button, .single_add_to_cart_button');
+            if (!btn) return;
+            var wrap = btn.closest('[data-product_id]') || btn.closest('form.cart');
+            if (!wrap) return;
+
+            var id    = wrap.getAttribute('data-product_id') || '';
+            var name  = wrap.getAttribute('data-product_name') || '';
+            var price = wrap.getAttribute('data-product_price') || '0';
+
+            if (!id || !name) {
+                var hiddenId    = wrap.querySelector('input[name="ga4_product_id"]');
+                var hiddenName  = wrap.querySelector('input[name="ga4_product_name"]');
+                var hiddenPrice = wrap.querySelector('input[name="ga4_product_price"]');
+                if (hiddenId)    id    = hiddenId.value;
+                if (hiddenName)  name  = hiddenName.value;
+                if (hiddenPrice) price = hiddenPrice.value;
+            }
+            if (!name) name = (document.querySelector('h1.product-title, h1.product_title, .product_title') || {}).textContent || '';
+            name = name.trim();
+
+            var qty = 1;
+            var qtyInput = wrap.querySelector('input[name="quantity"]');
+            if (qtyInput) qty = parseInt(qtyInput.value) || 1;
+
+            if (typeof gtag === 'function') {
+                gtag('event', 'add_to_cart', {
+                    currency: '<?php echo get_woocommerce_currency(); ?>',
+                    value: parseFloat(price) * qty,
+                    items: [{
+                        item_id: id,
+                        item_name: name,
+                        price: parseFloat(price),
+                        quantity: qty
+                    }]
+                });
+            }
+        });
+    })();
+    </script>
+    <?php
+}
+
+// ============ GA4 E-commerce: begin_checkout ============
+
+add_action('wp_footer', 'rupills_ga4_begin_checkout', 10);
+function rupills_ga4_begin_checkout() {
+    if ( ! is_checkout() || is_order_received_page() ) return;
+    $cart = WC()->cart;
+    if ( ! $cart || $cart->is_empty() ) return;
+
+    $items = [];
+    $pos   = 1;
+    foreach ( $cart->get_cart() as $item ) {
+        $p = $item['data'];
+        $cats = wp_get_post_terms($p->get_id(), 'product_cat', ['fields' => 'names']);
+        $items[] = [
+            'item_id'       => $p->get_sku() ?: (string) $p->get_id(),
+            'item_name'     => $p->get_name(),
+            'item_brand'    => rupills_get_product_brand($p),
+            'item_category' => ( ! is_wp_error($cats) && ! empty($cats) ) ? $cats[0] : '',
+            'price'         => (float) $p->get_price(),
+            'quantity'      => (int) $item['quantity'],
+            'index'         => $pos++,
+        ];
+    }
+    ?>
+    <script>
+    gtag('event', 'begin_checkout', {
+        currency: '<?php echo get_woocommerce_currency(); ?>',
+        value: <?php echo (float) $cart->get_total('edit'); ?>,
+        items: <?php echo wp_json_encode($items, JSON_UNESCAPED_UNICODE); ?>
+    });
+    </script>
+    <?php
+}
+
+// ============ GA4 E-commerce: purchase (thank-you page) ============
+
+add_action('wp_footer', 'rupills_ga4_purchase', 10);
+function rupills_ga4_purchase() {
+    if ( ! is_order_received_page() ) return;
+    global $wp;
+    $order_id = isset($wp->query_vars['order-received']) ? absint($wp->query_vars['order-received']) : 0;
+    if ( ! $order_id ) return;
+
+    $order = wc_get_order($order_id);
+    if ( ! $order ) return;
+
+    if ( $order->get_meta('_ga4_purchase_tracked') === 'yes' ) return;
+
+    $items = [];
+    $pos   = 1;
+    foreach ( $order->get_items() as $item ) {
+        $p = $item->get_product();
+        if ( ! $p ) continue;
+        $cats = wp_get_post_terms($p->get_id(), 'product_cat', ['fields' => 'names']);
+        $items[] = [
+            'item_id'       => $p->get_sku() ?: (string) $p->get_id(),
+            'item_name'     => $item->get_name(),
+            'item_brand'    => rupills_get_product_brand($p),
+            'item_category' => ( ! is_wp_error($cats) && ! empty($cats) ) ? $cats[0] : '',
+            'price'         => (float) $order->get_item_total($item),
+            'quantity'      => (int) $item->get_quantity(),
+            'index'         => $pos++,
+        ];
+    }
+
+    $coupon_list = $order->get_coupon_codes();
+    ?>
+    <script>
+    gtag('event', 'purchase', {
+        transaction_id: '<?php echo esc_js($order->get_order_number()); ?>',
+        value: <?php echo (float) $order->get_total(); ?>,
+        tax: <?php echo (float) $order->get_total_tax(); ?>,
+        shipping: <?php echo (float) $order->get_shipping_total(); ?>,
+        currency: '<?php echo esc_js($order->get_currency()); ?>',
+        coupon: <?php echo wp_json_encode( implode(',', $coupon_list) ); ?>,
+        items: <?php echo wp_json_encode($items, JSON_UNESCAPED_UNICODE); ?>
+    });
+    </script>
+    <?php
+
+    $order->update_meta_data('_ga4_purchase_tracked', 'yes');
+    $order->update_meta_data('_ga4_tracked_via', 'client');
+    $order->save();
+}
+
+// ============ GA4 E-commerce: view_cart ============
+
+add_action('wp_footer', 'rupills_ga4_view_cart', 10);
+function rupills_ga4_view_cart() {
+    if ( ! is_cart() ) return;
+    $cart = WC()->cart;
+    if ( ! $cart || $cart->is_empty() ) return;
+
+    $items = [];
+    $pos   = 1;
+    foreach ( $cart->get_cart() as $item ) {
+        $p = $item['data'];
+        $cats = wp_get_post_terms($p->get_id(), 'product_cat', ['fields' => 'names']);
+        $items[] = [
+            'item_id'       => $p->get_sku() ?: (string) $p->get_id(),
+            'item_name'     => $p->get_name(),
+            'item_brand'    => rupills_get_product_brand($p),
+            'item_category' => ( ! is_wp_error($cats) && ! empty($cats) ) ? $cats[0] : '',
+            'price'         => (float) $p->get_price(),
+            'quantity'      => (int) $item['quantity'],
+            'index'         => $pos++,
+        ];
+    }
+    ?>
+    <script>
+    gtag('event', 'view_cart', {
+        currency: '<?php echo get_woocommerce_currency(); ?>',
+        value: <?php echo (float) $cart->get_total('edit'); ?>,
+        items: <?php echo wp_json_encode($items, JSON_UNESCAPED_UNICODE); ?>
+    });
+    </script>
+    <?php
+}
+
+// GA4: data-attributes на кнопки «Добавить в корзину» в каталоге
+add_filter('woocommerce_loop_add_to_cart_args', 'rupills_ga4_cart_button_attrs', 10, 2);
+function rupills_ga4_cart_button_attrs($args, $product) {
+    $args['attributes']['data-product_name']  = $product->get_name();
+    $args['attributes']['data-product_price'] = $product->get_price();
+    return $args;
+}
+
+// GA4: data-attributes для формы на странице товара
+add_action('woocommerce_before_add_to_cart_button', 'rupills_ga4_single_product_data');
+function rupills_ga4_single_product_data() {
+    global $product;
+    if ( ! $product ) return;
+    printf(
+        '<input type="hidden" name="ga4_product_id" value="%s">'
+        . '<input type="hidden" name="ga4_product_name" value="%s">'
+        . '<input type="hidden" name="ga4_product_price" value="%s">',
+        esc_attr( $product->get_sku() ?: $product->get_id() ),
+        esc_attr( $product->get_name() ),
+        esc_attr( $product->get_price() )
+    );
+}
+
+// ============ GA4 Server-side: сохраняем client_id при оформлении заказа ============
+
+add_action('woocommerce_checkout_update_order_meta', 'rupills_save_ga_client_id', 10, 1);
+function rupills_save_ga_client_id($order_id) {
+    if (empty($_COOKIE['_ga'])) return;
+    // Cookie _ga имеет формат GA1.1.XXXXXXXXX.YYYYYYYYY — нужны последние 2 части
+    $parts = explode('.', $_COOKIE['_ga']);
+    $client_id = (count($parts) >= 4)
+        ? $parts[2] . '.' . $parts[3]
+        : $_COOKIE['_ga'];
+    update_post_meta($order_id, '_ga4_client_id', sanitize_text_field($client_id));
+}
+
+// ============ GA4 Server-side: purchase через Measurement Protocol ============
+
+add_action('woocommerce_order_status_processing', 'rupills_ga4_server_purchase', 20, 1);
+add_action('woocommerce_payment_complete', 'rupills_ga4_server_purchase', 20, 1);
+function rupills_ga4_server_purchase($order_id) {
+    $order = wc_get_order($order_id);
+    if (!$order) return;
+
+    if ($order->get_meta('_ga4_purchase_tracked') === 'yes') return;
+
+    $measurement_id = 'G-R8LTVK503R';
+    $api_secret     = 'hHU8JwoxTmqqtzxSLq451w';
+
+    $client_id = get_post_meta($order_id, '_ga4_client_id', true);
+    if (empty($client_id)) {
+        $client_id = 'server.' . $order_id;
+    }
+
+    $items = [];
+    foreach ($order->get_items() as $item) {
+        $p = $item->get_product();
+        $cats = $p ? wp_get_post_terms($p->get_id(), 'product_cat', ['fields' => 'names']) : [];
+        $items[] = [
+            'item_id'       => $p ? ($p->get_sku() ?: (string) $p->get_id()) : '',
+            'item_name'     => $item->get_name(),
+            'item_brand'    => $p ? rupills_get_product_brand($p) : '',
+            'item_category' => (!is_wp_error($cats) && !empty($cats)) ? $cats[0] : '',
+            'price'         => (float) $order->get_item_total($item),
+            'quantity'      => (int) $item->get_quantity(),
+        ];
+    }
+
+    $coupon_list = $order->get_coupon_codes();
+
+    $payload = [
+        'client_id' => $client_id,
+        'events' => [[
+            'name'   => 'purchase',
+            'params' => [
+                'transaction_id' => (string) $order->get_order_number(),
+                'value'          => (float) $order->get_total(),
+                'currency'       => $order->get_currency(),
+                'shipping'       => (float) $order->get_shipping_total(),
+                'tax'            => (float) $order->get_total_tax(),
+                'coupon'         => implode(',', $coupon_list),
+                'items'          => $items,
+            ],
+        ]],
+    ];
+
+    $response = wp_remote_post(
+        "https://www.google-analytics.com/mp/collect?measurement_id={$measurement_id}&api_secret={$api_secret}",
+        [
+            'body'    => wp_json_encode($payload),
+            'headers' => ['Content-Type' => 'application/json'],
+            'timeout' => 5,
+        ]
+    );
+
+    $success = !is_wp_error($response) && wp_remote_retrieve_response_code($response) === 204;
+
+    $order->update_meta_data('_ga4_purchase_tracked', 'yes');
+    $order->update_meta_data('_ga4_tracked_via', $success ? 'server' : 'server_error');
+    $order->save();
+
+    if ($success) {
+        $order->add_order_note('GA4: purchase event sent via Measurement Protocol (server-side).');
+    }
+}
+
+// ============ End GA4 E-commerce ============
+
+// ============ PWA Support + Install Tracking via gtag (GA4) ============
+
+add_action('wp_head', 'rupills_pwa_meta', 2);
 function rupills_pwa_meta() {
     ?>
     <link rel="manifest" href="/manifest.json">
@@ -1088,13 +1749,11 @@ function rupills_pwa_meta() {
     <?php
 }
 
-// 2. Register Service Worker + PWA install tracking via dataLayer (GTM4WP)
 add_action('wp_footer', 'rupills_pwa_sw_and_tracking', 999);
 function rupills_pwa_sw_and_tracking() {
     ?>
     <script data-no-optimize="1">
     (function() {
-        /* --- Service Worker --- */
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function() {
                 navigator.serviceWorker.register('/sw.js', { scope: '/' })
@@ -1103,40 +1762,30 @@ function rupills_pwa_sw_and_tracking() {
             });
         }
 
-        /* --- dataLayer init --- */
-        window.dataLayer = window.dataLayer || [];
-
-        /* --- Detect PWA launch (opened from home screen) --- */
         var isPWA = window.matchMedia('(display-mode: standalone)').matches
                  || window.navigator.standalone === true;
         if (isPWA) {
             document.cookie = 'is_pwa=1; path=/; max-age=31536000; SameSite=Lax';
-            window.dataLayer.push({
-                'event': 'pwa_launch',
-                'pwa_action': 'launched'
-            });
+            if (typeof gtag === 'function') {
+                gtag('event', 'pwa_launch', { pwa_action: 'launched' });
+            }
         } else {
             document.cookie = 'is_pwa=; path=/; max-age=0';
         }
 
-        /* --- Track install prompt shown (Android/Chrome) --- */
         window.addEventListener('beforeinstallprompt', function(e) {
-            window.dataLayer.push({
-                'event': 'pwa_install_prompt',
-                'pwa_action': 'prompt_shown'
-            });
+            if (typeof gtag === 'function') {
+                gtag('event', 'pwa_install_prompt', { pwa_action: 'prompt_shown' });
+            }
         });
 
-        /* --- Track successful installation --- */
         window.addEventListener('appinstalled', function() {
-            window.dataLayer.push({
-                'event': 'pwa_installed',
-                'pwa_action': 'installed'
-            });
+            if (typeof gtag === 'function') {
+                gtag('event', 'pwa_installed', { pwa_action: 'installed' });
+            }
             console.log('PWA: App installed');
         });
 
-        /* --- Open external links in system browser (not in-app) --- */
         if (isPWA) {
             document.addEventListener('click', function(e) {
                 var link = e.target.closest('a');
@@ -1498,3 +2147,992 @@ function rupills_auto_register_on_login( $user, $username, $password ) {
 // Cache exclusions for payment/cart/checkout pages are configured
 // directly in LiteSpeed Cache plugin settings (cache-exc option).
 // No hooks needed — see LiteSpeed > Cache > Do Not Cache URIs.
+
+// ============ Payment Reminder Emails for Blockonomics (Bitcoin) ============
+
+/**
+ * Проверяет, есть ли у этого email более новый неоплаченный заказ (Blockonomics).
+ * Если есть — напоминание для старого заказа не нужно, чтобы не засорять почту.
+ */
+function rupills_has_newer_unpaid_order($order_id, $email) {
+    $newer = wc_get_orders([
+        'billing_email' => $email,
+        'status'        => ['pending', 'on-hold'],
+        'payment_method' => 'blockonomics',
+        'limit'         => 1,
+        'orderby'       => 'date',
+        'order'         => 'DESC',
+        'return'        => 'ids',
+    ]);
+
+    return !empty($newer) && $newer[0] != $order_id;
+}
+
+add_action('woocommerce_checkout_order_processed', 'rupills_schedule_payment_reminders', 10, 3);
+function rupills_schedule_payment_reminders($order_id, $posted_data = null, $order = null) {
+    if (!$order) {
+        $order = wc_get_order($order_id);
+    }
+    if (!$order) return;
+
+    if ($order->get_payment_method() !== 'blockonomics') return;
+
+    // Читаем задержки напоминаний из общих настроек, при отсутствии — используем дефолтные значения
+    $delays = [
+        1 => 30 * MINUTE_IN_SECONDS,
+        2 => DAY_IN_SECONDS,
+    ];
+
+    if (function_exists('rupills_email_settings')) {
+        $settings = rupills_email_settings();
+        if (!empty($settings['payment_reminders']['reminder_delays']) && is_array($settings['payment_reminders']['reminder_delays'])) {
+            $configured = $settings['payment_reminders']['reminder_delays'];
+            foreach ($configured as $num => $delay) {
+                $num = (int) $num;
+                if ($num >= 1 && $num <= 5 && $delay > 0) {
+                    $delays[$num] = (int) $delay;
+                }
+            }
+        }
+    }
+
+    if (!as_next_scheduled_action('rupills_send_payment_reminder', [$order_id, 1], 'rupills-payment-reminders') && !empty($delays[1])) {
+        as_schedule_single_action(
+            time() + (int) $delays[1],
+            'rupills_send_payment_reminder',
+            [$order_id, 1],
+            'rupills-payment-reminders'
+        );
+    }
+
+    if (!as_next_scheduled_action('rupills_send_payment_reminder', [$order_id, 2], 'rupills-payment-reminders') && !empty($delays[2])) {
+        as_schedule_single_action(
+            time() + (int) $delays[2],
+            'rupills_send_payment_reminder',
+            [$order_id, 2],
+            'rupills-payment-reminders'
+        );
+    }
+}
+
+add_action('rupills_send_payment_reminder', 'rupills_process_payment_reminder', 10, 2);
+function rupills_process_payment_reminder($order_id, $reminder_num) {
+    $order = wc_get_order($order_id);
+    if (!$order) return;
+
+    if (!in_array($order->get_status(), ['pending', 'on-hold'])) return;
+
+    $meta_key = '_payment_reminder_' . intval($reminder_num) . '_sent';
+    if ($order->get_meta($meta_key)) return;
+
+    $email = $order->get_billing_email();
+    if ($email && rupills_has_newer_unpaid_order($order_id, $email)) return;
+
+    if (!class_exists('Blockonomics')) {
+        $plugin_path = WP_PLUGIN_DIR . '/blockonomics-bitcoin-payments/php/Blockonomics.php';
+        if (file_exists($plugin_path)) {
+            include_once $plugin_path;
+        } else {
+            return;
+        }
+    }
+
+    $blockonomics = new Blockonomics();
+    $payment_url = $blockonomics->get_order_checkout_url($order_id);
+    if (empty($payment_url)) return;
+
+    $lang = $order->get_meta('wpml_language');
+    if (empty($lang)) {
+        $lang = get_post_meta($order_id, 'wpml_language', true);
+    }
+    if (empty($lang)) {
+        $lang = 'en';
+    }
+
+    $name  = esc_html($order->get_billing_first_name());
+    $num   = $order->get_order_number();
+    $total = $order->get_formatted_order_total();
+    $url   = esc_url($payment_url);
+
+    $btn_label = ($lang === 'ru') ? 'Оплатить заказ' : 'Pay Now';
+    $btn_html  = '<div style="text-align:center;margin:25px 0;">'
+        . '<a href="' . $url . '" style="display:inline-block;padding:14px 35px;background-color:#29ABE2;color:#ffffff;text-decoration:none;border-radius:6px;font-size:16px;font-weight:bold;">' . $btn_label . '</a>'
+        . '</div>'
+        . '<p style="font-size:12px;color:#888;text-align:center;"><a href="' . $url . '">' . $url . '</a></p>';
+
+    $urgency_html = '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:14px 18px;margin:20px 0;text-align:center;">'
+        . '<span style="font-size:18px;">⏰</span> '
+        . '<strong style="color:#856404;font-size:14px;">'
+        . (($lang === 'ru')
+            ? 'Оплатите заказ, пока товары есть в наличии! Количество ограничено.'
+            : 'Pay now while items are still in stock! Quantities are limited.')
+        . '</strong>'
+        . '</div>';
+
+    if ($lang === 'ru') {
+        $subject = sprintf('[Ru-Pills.com] Завершите оплату заказа #%s', $num);
+
+        if ($reminder_num == 1) {
+            $heading = sprintf('Завершите оплату заказа #%s', $num);
+            $body = sprintf(
+                'Здравствуйте, %s!<br><br>'
+                . 'Мы заметили, что вы начали оформление заказа <strong>#%s</strong> на сумму <strong>%s</strong>, но оплата ещё не завершена.<br><br>'
+                . '%s'
+                . 'Нажмите на кнопку ниже, чтобы вернуться на страницу оплаты:%s'
+                . 'Если у вас возникли вопросы, напишите нам в <a href="https://t.me/Ru_pills">Telegram</a>.<br><br>'
+                . 'Спасибо,<br>Команда Ru-Pills.com',
+                $name, $num, $total, $urgency_html, $btn_html
+            );
+        } else {
+            $heading = sprintf('Напоминание: заказ #%s ожидает оплаты', $num);
+            $body = sprintf(
+                'Здравствуйте, %s!<br><br>'
+                . 'Напоминаем, что ваш заказ <strong>#%s</strong> на сумму <strong>%s</strong> всё ещё ожидает оплаты.<br><br>'
+                . '%s'
+                . 'Заказ будет автоматически отменён, если оплата не поступит. Нажмите на кнопку ниже, чтобы завершить покупку:%s'
+                . 'Если у вас возникли вопросы, напишите нам в <a href="https://t.me/Ru_pills">Telegram</a>.<br><br>'
+                . 'Спасибо,<br>Команда Ru-Pills.com',
+                $name, $num, $total, $urgency_html, $btn_html
+            );
+        }
+    } else {
+        $subject = sprintf('[Ru-Pills.com] Complete payment for order #%s', $num);
+
+        if ($reminder_num == 1) {
+            $heading = sprintf('Complete payment for order #%s', $num);
+            $body = sprintf(
+                'Hello, %s!<br><br>'
+                . 'We noticed you started checkout for order <strong>#%s</strong> totalling <strong>%s</strong>, but the payment has not been completed yet.<br><br>'
+                . '%s'
+                . 'Click the button below to return to the payment page:%s'
+                . 'If you have any questions, contact us via <a href="https://t.me/Ru_pills">Telegram</a>.<br><br>'
+                . 'Thank you,<br>Ru-Pills.com Team',
+                $name, $num, $total, $urgency_html, $btn_html
+            );
+        } else {
+            $heading = sprintf('Reminder: order #%s is awaiting payment', $num);
+            $body = sprintf(
+                'Hello, %s!<br><br>'
+                . 'This is a reminder that your order <strong>#%s</strong> totalling <strong>%s</strong> is still awaiting payment.<br><br>'
+                . '%s'
+                . 'The order will be automatically cancelled if payment is not received. Click the button below to complete your purchase:%s'
+                . 'If you have any questions, contact us via <a href="https://t.me/Ru_pills">Telegram</a>.<br><br>'
+                . 'Thank you,<br>Ru-Pills.com Team',
+                $name, $num, $total, $urgency_html, $btn_html
+            );
+        }
+    }
+
+    do_action('wpml_switch_language', $lang);
+
+    ob_start();
+    wc_get_template(
+        'emails/email-order-details.php',
+        [
+            'order'         => $order,
+            'sent_to_admin' => false,
+            'plain_text'    => false,
+            'email'         => '',
+        ]
+    );
+    $body .= ob_get_clean();
+
+    $mailer = WC()->mailer();
+    $email_content = $mailer->wrap_message($heading, $body);
+    $result = $mailer->send($order->get_billing_email(), $subject, $email_content);
+
+    do_action('wpml_switch_language', null);
+
+    if ($result) {
+        $order->update_meta_data($meta_key, current_time('mysql'));
+        $order->save();
+
+        $note = ($reminder_num == 1)
+            ? 'Payment reminder #1 (30 min) sent to customer.'
+            : 'Payment reminder #2 (24h) sent to customer.';
+        $order->add_order_note($note);
+    }
+}
+
+add_action('woocommerce_order_status_changed', 'rupills_cancel_payment_reminders', 10, 4);
+function rupills_cancel_payment_reminders($order_id, $old_status, $new_status, $order) {
+    $paid_or_closed = ['processing', 'completed', 'cancelled', 'refunded', 'failed', 'reserved'];
+    if (!in_array($new_status, $paid_or_closed)) return;
+
+    as_unschedule_all_actions('rupills_send_payment_reminder', [$order_id, 1], 'rupills-payment-reminders');
+    as_unschedule_all_actions('rupills_send_payment_reminder', [$order_id, 2], 'rupills-payment-reminders');
+
+    $email = $order->get_billing_email();
+    if (!$email) return;
+
+    $other_unpaid = wc_get_orders([
+        'billing_email'  => $email,
+        'status'         => ['pending', 'on-hold'],
+        'payment_method' => 'blockonomics',
+        'limit'          => -1,
+        'return'         => 'ids',
+        'exclude'        => [$order_id],
+    ]);
+
+    foreach ($other_unpaid as $other_id) {
+        as_unschedule_all_actions('rupills_send_payment_reminder', [$other_id, 1], 'rupills-payment-reminders');
+        as_unschedule_all_actions('rupills_send_payment_reminder', [$other_id, 2], 'rupills-payment-reminders');
+    }
+}
+
+// ============ End Payment Reminder Emails ============
+
+// ============ Custom Underpayment Email subject & heading (Blockonomics) ============
+
+function rupills_is_blockonomics_underpayment($order) {
+    if ($order->get_payment_method() !== 'blockonomics' || !$order->needs_payment()) {
+        return false;
+    }
+    global $wpdb;
+    $table = $wpdb->prefix . 'blockonomics_payments';
+    $paid  = (float) $wpdb->get_var($wpdb->prepare(
+        "SELECT COALESCE(SUM(paid_fiat), 0) FROM {$table} WHERE order_id = %d",
+        $order->get_id()
+    ));
+    return $paid > 0;
+}
+
+function rupills_get_order_lang($order) {
+    $lang = $order->get_meta('wpml_language');
+    if (empty($lang)) {
+        $lang = get_post_meta($order->get_id(), 'wpml_language', true);
+    }
+    return !empty($lang) ? $lang : 'en';
+}
+
+add_filter('woocommerce_email_subject_customer_invoice', 'rupills_underpayment_email_subject', 10, 2);
+function rupills_underpayment_email_subject($subject, $order) {
+    if (!rupills_is_blockonomics_underpayment($order)) return $subject;
+
+    $num  = $order->get_order_number();
+    $lang = rupills_get_order_lang($order);
+
+    return ($lang === 'ru')
+        ? sprintf('[Ru-Pills.com] Требуется доплата по заказу #%s', $num)
+        : sprintf('[Ru-Pills.com] Additional payment required for order #%s', $num);
+}
+
+add_filter('woocommerce_email_heading_customer_invoice', 'rupills_underpayment_email_heading', 10, 2);
+function rupills_underpayment_email_heading($heading, $order) {
+    if (!rupills_is_blockonomics_underpayment($order)) return $heading;
+
+    $num  = $order->get_order_number();
+    $lang = rupills_get_order_lang($order);
+
+    return ($lang === 'ru')
+        ? sprintf('Частичная оплата получена — заказ #%s', $num)
+        : sprintf('Partial payment received — order #%s', $num);
+}
+
+// ============ End Custom Underpayment Email ============
+
+// ============ Checkout: настройки отображения методов оплаты ============
+
+// Убираем описание Blockonomics
+add_filter('woocommerce_gateway_description', 'rupills_remove_blockonomics_description', 10, 2);
+function rupills_remove_blockonomics_description($description, $gateway_id) {
+    if ($gateway_id === 'blockonomics') return '';
+    return $description;
+}
+
+// CSS: скрываем описание + уменьшаем иконки + скрываем выбор если один метод
+add_action('wp_head', 'rupills_checkout_payment_css', 999);
+function rupills_checkout_payment_css() {
+    if (!is_checkout() && !is_wc_endpoint_url('order-pay')) return;
+    ?>
+    <style>
+        .payment_method_blockonomics .payment_box,
+        .payment_method_blockonomics .payment_box * { display: none !important; }
+        .wc_payment_method img {
+            max-width: 60px !important;
+            max-height: 40px !important;
+            height: auto !important;
+            width: auto !important;
+        }
+    </style>
+    <?php
+}
+
+// Скрываем список методов оплаты визуально если доступен только один
+add_filter('woocommerce_update_order_review_fragments', 'rupills_hide_single_payment_method');
+function rupills_hide_single_payment_method($fragments) {
+    $gateways = WC()->payment_gateways()->get_available_payment_gateways();
+    if (count($gateways) <= 1) {
+        $fragments['.woocommerce-checkout-payment'] = str_replace(
+            'class="wc_payment_methods',
+            'class="wc_payment_methods" style="display:none!important',
+            $fragments['.woocommerce-checkout-payment'] ?? ''
+        );
+    }
+    return $fragments;
+}
+
+// ============ End Checkout payment method ============
+
+// ============ YITH Funds: fix partial payment + Deposit double-pay bug ============
+// When partial payment reduces _order_total and the session expires,
+// a customer can return and pay the reduced total with Deposit again,
+// causing only the remainder to be charged instead of the full fund amount.
+// This hook recalculates the correct fund deduction on payment completion.
+
+add_action('woocommerce_payment_complete', 'rupills_fix_partial_fund_deduction', 5);
+function rupills_fix_partial_fund_deduction($order_id) {
+    $order = wc_get_order($order_id);
+    if (!$order) return;
+    if ($order->get_payment_method() !== 'yith_funds') return;
+    if ($order->get_meta('ywf_partial_payment') !== 'yes') return;
+
+    $items_total = 0;
+    foreach ($order->get_items() as $item) {
+        $items_total += floatval($item->get_total()) + floatval($item->get_total_tax());
+    }
+
+    $shipping_items_total = 0;
+    foreach ($order->get_items('shipping') as $item) {
+        $shipping_items_total += floatval($item->get_total()) + floatval($item->get_total_tax());
+    }
+
+    $real_total = $items_total + $shipping_items_total;
+    $recorded_funds = floatval($order->get_meta('_order_funds'));
+
+    if ($recorded_funds >= $real_total) return;
+
+    $customer_id = $order->get_user_id();
+    if (!$customer_id) return;
+    if (!class_exists('YITH_YWF_Customer')) return;
+
+    $missing = $real_total - $recorded_funds;
+    $customer_fund = new YITH_YWF_Customer($customer_id);
+    $customer_fund->decrement_funds($missing);
+
+    $order->update_meta_data('_order_funds', $real_total);
+    $order->save();
+
+    $order->add_order_note(sprintf(
+        'Auto-fix: partial payment fund correction. Deducted additional €%.2f from customer #%d funds (total funds used: €%.2f).',
+        $missing, $customer_id, $real_total
+    ));
+}
+
+// ============ SEO Improvements ============
+
+// --- Пункт 2: Auto meta description для товаров, если пустой в Yoast ---
+add_filter( 'wpseo_metadesc', 'rupills_auto_product_metadesc' );
+function rupills_auto_product_metadesc( $desc ) {
+    if ( ! empty( $desc ) || ! is_product() ) {
+        return $desc;
+    }
+    $product = wc_get_product( get_the_ID() );
+    if ( ! $product ) {
+        return $desc;
+    }
+
+    $title = $product->get_name();
+    $lang  = apply_filters( 'wpml_current_language', 'en' );
+    $brand = rupills_get_product_brand( $product );
+
+    $cats      = wp_get_post_terms( $product->get_id(), 'product_cat', array( 'fields' => 'names' ) );
+    $category  = ( ! is_wp_error( $cats ) && ! empty( $cats ) ) ? $cats[0] : '';
+
+    if ( $lang === 'ru' ) {
+        $desc = 'Купить ' . $title;
+        if ( $brand ) $desc .= ' (' . $brand . ')';
+        $desc .= ' в интернет-аптеке Ru-Pills.com.';
+        if ( $category ) $desc .= ' Категория: ' . $category . '.';
+        $desc .= ' Доставка в США, Великобританию, Европу и 120+ стран. Быстрая отправка.';
+    } else {
+        $desc = 'Buy ' . $title;
+        if ( $brand ) $desc .= ' (' . $brand . ')';
+        $desc .= ' online at Ru-Pills.com.';
+        if ( $category ) $desc .= ' Category: ' . $category . '.';
+        $desc .= ' International delivery to USA, UK, Europe and 120+ countries. Fast shipping.';
+    }
+
+    return mb_substr( $desc, 0, 160 );
+}
+
+// --- Пункт 4: Organization schema — контакты и соцсети ---
+add_filter( 'wpseo_schema_organization', 'rupills_enhance_organization_schema' );
+function rupills_enhance_organization_schema( $data ) {
+    $data['contactPoint'] = array(
+        '@type'       => 'ContactPoint',
+        'contactType' => 'customer service',
+        'url'         => 'https://t.me/Ru_pills',
+        'availableLanguage' => array( 'English', 'Russian' ),
+    );
+    $data['sameAs'] = array(
+        'https://t.me/Ru_pills',
+    );
+    return $data;
+}
+
+// --- Пункт 5: og:image по умолчанию, если нет своего ---
+add_action( 'wpseo_add_opengraph_images', 'rupills_default_og_image' );
+function rupills_default_og_image( $opengraph_images ) {
+    if ( ! $opengraph_images->has_images() ) {
+        $opengraph_images->add_image( home_url( '/icon_x512.png' ) );
+    }
+}
+
+// --- Пункт 6: ItemList schema на страницах категорий ---
+add_action( 'woocommerce_after_shop_loop', 'rupills_category_itemlist_schema' );
+function rupills_category_itemlist_schema() {
+    if ( ! is_product_category() && ! is_product_tag() ) {
+        return;
+    }
+    global $wp_query;
+    if ( empty( $wp_query->posts ) ) {
+        return;
+    }
+
+    $items    = array();
+    $position = 1;
+    foreach ( $wp_query->posts as $post ) {
+        $items[] = array(
+            '@type'    => 'ListItem',
+            'position' => $position++,
+            'url'      => get_permalink( $post->ID ),
+            'name'     => get_the_title( $post->ID ),
+        );
+    }
+
+    $schema = array(
+        '@context'        => 'https://schema.org',
+        '@type'           => 'ItemList',
+        'name'            => single_term_title( '', false ),
+        'numberOfItems'   => count( $items ),
+        'itemListElement' => $items,
+    );
+
+    echo '<script type="application/ld+json">' . wp_json_encode( $schema, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES ) . '</script>';
+}
+
+// ============ End SEO Improvements ============
+
+// ============ Custom Tracking Number & Email ============
+
+add_filter( 'woocommerce_email_enabled_customer_completed_order', '__return_false' );
+
+add_action( 'add_meta_boxes', 'rupills_tracking_meta_box' );
+function rupills_tracking_meta_box() {
+	$screens = array( 'shop_order', wc_get_page_screen_id( 'shop-order' ) );
+	foreach ( $screens as $screen ) {
+		add_meta_box(
+			'rupills_tracking_box',
+			'Трек-номер отправления',
+			'rupills_tracking_meta_box_html',
+			$screen,
+			'side',
+			'high'
+		);
+	}
+}
+
+function rupills_tracking_meta_box_html( $post_or_order ) {
+	$order = ( $post_or_order instanceof WC_Order )
+		? $post_or_order
+		: wc_get_order( $post_or_order->ID );
+	if ( ! $order ) return;
+
+	$tracking = $order->get_meta( '_rupills_tracking_number' );
+	if ( empty( $tracking ) ) {
+		$tracking = $order->get_meta( '_wcst_order_trackno' );
+	}
+	$sent     = $order->get_meta( '_rupills_tracking_email_sent' );
+	wp_nonce_field( 'rupills_tracking_save', 'rupills_tracking_nonce' );
+	?>
+	<p>
+		<label for="rupills_tracking_number"><strong>Трек-номер:</strong></label><br>
+		<input type="text" id="rupills_tracking_number"
+		       name="rupills_tracking_number"
+		       value="<?php echo esc_attr( $tracking ); ?>"
+		       style="width:100%;" placeholder="например RA123456789CN" />
+	</p>
+	<p>
+		<label>
+			<input type="checkbox" name="rupills_resend_tracking_email" value="1" />
+			Отправить (переотправить) письмо с трек-номером
+		</label>
+	</p>
+	<?php if ( $sent ) : ?>
+		<p style="color:#28a745;font-weight:600;margin:0;">
+			&#9993; Письмо отправлено: <?php echo esc_html( $sent ); ?>
+		</p>
+	<?php endif; ?>
+	<?php
+}
+
+add_action( 'woocommerce_process_shop_order_meta', 'rupills_tracking_save', 50, 1 );
+function rupills_tracking_save( $order_id ) {
+	if ( ! isset( $_POST['rupills_tracking_nonce'] ) ||
+	     ! wp_verify_nonce( $_POST['rupills_tracking_nonce'], 'rupills_tracking_save' ) ) {
+		return;
+	}
+
+	$order        = wc_get_order( $order_id );
+	$tracking_new = isset( $_POST['rupills_tracking_number'] )
+		? sanitize_text_field( $_POST['rupills_tracking_number'] ) : '';
+	$tracking_old = $order->get_meta( '_rupills_tracking_number' );
+
+	$order->update_meta_data( '_rupills_tracking_number', $tracking_new );
+	$order->save();
+
+	$resend       = ! empty( $_POST['rupills_resend_tracking_email'] );
+	$just_added   = empty( $tracking_old ) && ! empty( $tracking_new );
+	$is_completed = $order->get_status() === 'completed';
+
+	if ( ! empty( $tracking_new ) && ( $resend || ( $just_added && $is_completed ) ) ) {
+		rupills_send_tracking_email( $order );
+	}
+}
+
+add_action( 'woocommerce_order_status_completed', 'rupills_tracking_on_completed', 10, 1 );
+function rupills_tracking_on_completed( $order_id ) {
+	if ( ! empty( $_POST['rupills_tracking_nonce'] ) ) {
+		return;
+	}
+	$order    = wc_get_order( $order_id );
+	$tracking = $order->get_meta( '_rupills_tracking_number' );
+	if ( ! empty( $tracking ) ) {
+		rupills_send_tracking_email( $order );
+	}
+}
+
+function rupills_send_tracking_email( $order ) {
+	$tracking   = $order->get_meta( '_rupills_tracking_number' );
+	if ( empty( $tracking ) ) return;
+
+	$email      = $order->get_billing_email();
+	$first_name = $order->get_billing_first_name();
+	$order_id   = $order->get_id();
+	$track_url  = 'https://parcelsapp.com/en/tracking/' . rawurlencode( $tracking );
+
+	$lang = $order->get_meta( 'wpml_language' );
+	if ( empty( $lang ) ) {
+		$lang = get_post_meta( $order_id, 'wpml_language', true );
+	}
+	if ( empty( $lang ) ) {
+		$lang = 'en';
+	}
+
+	if ( $lang === 'ru' ) {
+		$subject = '[Ru-Pills.com] Ваш заказ #' . $order_id . ' отправлен';
+		$heading = 'Ваш заказ отправлен!';
+		$p1 = 'Здравствуйте, ' . esc_html( $first_name ) . '!';
+		$p2 = 'Ваш заказ <strong>#' . $order_id . '</strong> отправлен!';
+		$p3_label = 'Номер для отслеживания:';
+		$btn_text = 'Отследить посылку';
+		$note_heading = 'Обратите внимание:';
+		$note1 = 'Посылка отправлена как личный подарок от частного лица без упоминания нашей компании. Внутри нет коммерческих документов (инвойсов, счетов и&nbsp;т.д.)&nbsp;&mdash; так и должно быть, не переживайте.';
+		$note2 = 'После отправки мы, к сожалению, не можем повлиять на сроки и скорость доставки, а также не имеем возможности вносить изменения в отправление. По любым вопросам, связанным с доставкой, необходимо обращаться в почтовую службу.';
+		$note3 = 'Если вам потребуются данные отправителя, просто ответьте на это письмо&nbsp;&mdash; мы предоставим всю необходимую информацию.';
+		$thanks = 'Спасибо за покупку!';
+		$team   = 'Команда Ru-Pills.com';
+	} else {
+		$subject = '[Ru-Pills.com] Your order #' . $order_id . ' has been shipped';
+		$heading = 'Your order has been shipped!';
+		$p1 = 'Hello, ' . esc_html( $first_name ) . '!';
+		$p2 = 'Your order <strong>#' . $order_id . '</strong> has been shipped!';
+		$p3_label = 'Tracking number:';
+		$btn_text = 'Track your package';
+		$note_heading = 'Please note:';
+		$note1 = 'Your package has been sent as a personal gift from a private individual with no reference to our company. There are no commercial documents (invoices, receipts, etc.) inside&nbsp;&mdash; this is normal and expected.';
+		$note2 = 'Once the package has been shipped, we are unfortunately unable to influence delivery times or make any changes to the shipment. For any delivery-related questions, please contact your local postal service directly.';
+		$note3 = 'If you need the sender\'s details, simply reply to this email&nbsp;&mdash; we will provide all the necessary information.';
+		$thanks = 'Thank you for your purchase!';
+		$team   = 'Team Ru-Pills.com';
+	}
+
+	$body = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body style="margin:0;padding:0;background:#f7f7f7;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f7f7f7;padding:40px 0;">
+<tr><td align="center">
+
+<table width="600" cellpadding="0" cellspacing="0" style="font-family:Arial,Helvetica,sans-serif;">
+
+<tr><td style="padding:0 0 24px;text-align:center;">
+<img src="https://ru-pills.com/wp-content/uploads/2022/12/logo_new.png" alt="Ru-Pills.com" style="max-width:160px;height:auto;" />
+</td></tr>
+
+<tr><td>
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.08);">
+
+<tr><td style="background:#3498db;padding:28px 40px;text-align:center;">
+<h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700;letter-spacing:0.3px;">' . $heading . '</h1>
+</td></tr>
+
+<tr><td style="padding:32px 40px 12px;">
+<p style="margin:0 0 6px;font-size:15px;color:#3c3c3c;line-height:1.6;">' . $p1 . '</p>
+<p style="margin:0 0 24px;font-size:15px;color:#3c3c3c;line-height:1.6;">' . $p2 . '</p>
+
+<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e2ecf4;border-radius:6px;margin-bottom:28px;">
+<tr><td style="background:#f4f9fd;padding:18px 22px;">
+<p style="margin:0 0 4px;font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.5px;">' . $p3_label . '</p>
+<p style="margin:0;font-size:20px;font-weight:700;color:#3498db;letter-spacing:0.5px;">' . esc_html( $tracking ) . '</p>
+</td></tr>
+</table>
+
+<table cellpadding="0" cellspacing="0" style="margin:0 auto 32px;">
+<tr><td style="background:#3498db;border-radius:6px;text-align:center;">
+<a href="' . esc_url( $track_url ) . '" style="display:inline-block;color:#ffffff;text-decoration:none;padding:14px 40px;font-size:16px;font-weight:600;font-family:Arial,Helvetica,sans-serif;">' . $btn_text . '</a>
+</td></tr>
+</table>
+</td></tr>
+
+<tr><td style="padding:0 40px 32px;">
+<div style="background:#fff8e1;border-left:4px solid #ffc107;border-radius:4px;padding:16px 18px;">
+<p style="margin:0 0 10px;font-weight:700;font-size:14px;color:#856404;">' . $note_heading . '</p>
+<p style="margin:0 0 10px;font-size:13px;color:#856404;line-height:1.6;">' . $note1 . '</p>
+<p style="margin:0 0 10px;font-size:13px;color:#856404;line-height:1.6;">' . $note2 . '</p>
+<p style="margin:0;font-size:13px;color:#856404;line-height:1.6;">' . $note3 . '</p>
+</div>
+</td></tr>
+
+<tr><td style="padding:20px 40px;text-align:center;border-top:1px solid #eee;">
+<p style="margin:0;font-size:15px;font-weight:600;color:#3c3c3c;">' . $thanks . '</p>
+</td></tr>
+
+</table>
+</td></tr>
+
+<tr><td style="padding:20px 0 0;text-align:center;font-size:12px;color:#aaa;font-family:Arial,Helvetica,sans-serif;">
+' . $team . '
+</td></tr>
+
+</table>
+
+</td></tr></table>
+</body></html>';
+
+	$headers = array( 'Content-Type: text/html; charset=UTF-8' );
+	wp_mail( $email, $subject, $body, $headers );
+
+	$order->update_meta_data( '_rupills_tracking_email_sent', current_time( 'd.m.Y H:i' ) );
+	$order->save();
+}
+
+// ============ End Custom Tracking Number & Email ============
+
+// ============ Tracking Number on My Account / View Order ============
+
+add_action( 'woocommerce_order_details_after_order_table', 'rupills_tracking_on_order_details', 10, 1 );
+function rupills_tracking_on_order_details( $order ) {
+	$tracking = $order->get_meta( '_rupills_tracking_number' );
+	if ( empty( $tracking ) ) {
+		$tracking = $order->get_meta( '_wcst_order_trackno' );
+	}
+	if ( empty( $tracking ) ) return;
+
+	$track_url = 'https://parcelsapp.com/en/tracking/' . rawurlencode( $tracking );
+	$lang = get_user_locale();
+	$is_ru = ( strpos( $lang, 'ru' ) === 0 );
+
+	$label     = $is_ru ? 'Трек-номер' : 'Tracking number';
+	$btn_text  = $is_ru ? 'Отследить посылку' : 'Track your package';
+	?>
+	<section class="rupills-tracking-section" style="margin-top:24px;padding:20px;background:#f8f9fa;border-radius:8px;border:1px solid #e0e0e0;">
+		<h2 style="font-size:16px;margin:0 0 12px;font-weight:700;"><?php echo esc_html( $label ); ?></h2>
+		<p style="font-size:20px;font-weight:700;color:#3498db;margin:0 0 14px;letter-spacing:0.5px;"><?php echo esc_html( $tracking ); ?></p>
+		<a href="<?php echo esc_url( $track_url ); ?>" target="_blank" rel="noopener"
+		   style="display:inline-block;background:#3498db;color:#fff;text-decoration:none;padding:10px 28px;border-radius:5px;font-size:15px;font-weight:600;">
+			<?php echo esc_html( $btn_text ); ?>
+		</a>
+	</section>
+	<?php
+}
+
+// ============ End Tracking Number on My Account / View Order ============
+
+// ============ Search Orders by Tracking Number ============
+
+// HPOS: add tracking meta key to searchable meta fields
+add_filter( 'woocommerce_order_table_search_query_meta_keys', 'rupills_add_tracking_to_hpos_search' );
+function rupills_add_tracking_to_hpos_search( $meta_keys ) {
+	$meta_keys[] = '_rupills_tracking_number';
+	return $meta_keys;
+}
+
+// Legacy (post-based): add tracking meta key to searchable fields
+add_filter( 'woocommerce_shop_order_search_fields', 'rupills_add_tracking_to_legacy_search' );
+function rupills_add_tracking_to_legacy_search( $search_fields ) {
+	$search_fields[] = '_rupills_tracking_number';
+	return $search_fields;
+}
+
+// ============ End Search Orders by Tracking Number ============
+
+// ============ Relevanssi XSS sanitization (CVE-2025-4054 / CVE-2025-5016) ============
+
+add_filter( 'relevanssi_excerpt_query', 'rupills_sanitize_relevanssi_query' );
+add_filter( 'relevanssi_search_ok', 'rupills_sanitize_highlight_qv', 1 );
+
+function rupills_sanitize_relevanssi_query( $query ) {
+	if ( is_array( $query ) ) {
+		return array_map( 'wp_strip_all_tags', $query );
+	}
+	return wp_strip_all_tags( $query );
+}
+
+function rupills_sanitize_highlight_qv( $ok ) {
+	global $wp_query;
+	if ( isset( $wp_query->query_vars['highlight'] ) ) {
+		$wp_query->query_vars['highlight'] = wp_strip_all_tags(
+			$wp_query->query_vars['highlight']
+		);
+	}
+	return $ok;
+}
+
+// ============ End Relevanssi XSS sanitization ============
+
+// ============ Translate WooCommerce store notice per WPML language ============
+add_filter( 'option_woocommerce_demo_store_notice', 'rupills_translate_store_notice' );
+function rupills_translate_store_notice( $notice ) {
+	$lang = apply_filters( 'wpml_current_language', 'en' );
+	if ( $lang === 'ru' ) {
+		return 'Пауза в отправке: 26 февраля – 13 марта. Оформляйте заказ сейчас — отправим в первую очередь после возобновления! Все заказы принимаются и обрабатываются как обычно.';
+	}
+	return $notice;
+}
+
+// ============ Translate search placeholder per WPML language ============
+add_filter( 'theme_mod_search_placeholder', 'rupills_translate_search_placeholder' );
+function rupills_translate_search_placeholder( $value ) {
+	$lang = apply_filters( 'wpml_current_language', 'en' );
+	if ( $lang === 'ru' ) {
+		return 'Поиск по названию, действующему веществу или заболеванию...';
+	}
+	return 'Search by drug name, active ingredient, or condition...';
+}
+
+// ============ Validate billing email MX records on checkout ============
+add_action( 'woocommerce_after_checkout_validation', 'rupills_validate_email_mx', 10, 2 );
+function rupills_validate_email_mx( $data, $errors ) {
+	$email = isset( $data['billing_email'] ) ? $data['billing_email'] : '';
+	if ( empty( $email ) || ! is_email( $email ) ) {
+		return;
+	}
+
+	$domain = substr( $email, strrpos( $email, '@' ) + 1 );
+
+	$has_mx = checkdnsrr( $domain, 'MX' );
+	if ( $has_mx ) {
+		return;
+	}
+
+	$has_a = checkdnsrr( $domain, 'A' );
+	if ( $has_a ) {
+		return;
+	}
+
+	$lang = apply_filters( 'wpml_current_language', 'en' );
+	if ( $lang === 'ru' ) {
+		$errors->add( 'validation', 'Домен электронной почты не существует или не принимает письма. Пожалуйста, проверьте адрес.' );
+	} else {
+		$errors->add( 'validation', 'The email domain does not exist or cannot receive emails. Please check your email address.' );
+	}
+}
+// ============ End Validate billing email MX ============
+
+// ============ Redirect empty search to homepage ============
+add_action( 'template_redirect', 'rupills_redirect_empty_search' );
+function rupills_redirect_empty_search() {
+	if ( is_search() && isset( $_GET['s'] ) && trim( $_GET['s'] ) === '' ) {
+		wp_safe_redirect( home_url( '/' ) );
+		exit;
+	}
+}
+
+// ============ Prevent empty search form submission (JS) ============
+add_action( 'wp_footer', 'rupills_prevent_empty_search_js' );
+function rupills_prevent_empty_search_js() {
+	?>
+	<script>
+	(function(){
+		document.querySelectorAll('form.searchform').forEach(function(form){
+			form.addEventListener('submit', function(e){
+				var input = form.querySelector('input[name="s"]');
+				if( input && input.value.trim() === '' ){
+					e.preventDefault();
+					input.focus();
+					input.classList.add('shake');
+					setTimeout(function(){ input.classList.remove('shake'); }, 600);
+				}
+			});
+		});
+	})();
+	</script>
+	<style>
+	@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}
+	.shake{animation:shake .4s ease}
+	</style>
+	<?php
+}
+
+// ============ Relevanssi: auto-expand search with pharma name variants ============
+add_filter( 'relevanssi_implicit_operator', 'rupills_maybe_or_operator' );
+function rupills_maybe_or_operator( $operator ) {
+	global $rupills_search_expanded;
+	return ! empty( $rupills_search_expanded ) ? 'OR' : $operator;
+}
+
+add_filter( 'relevanssi_modify_wp_query', 'rupills_relevanssi_pharma_variants' );
+function rupills_relevanssi_pharma_variants( $query ) {
+	global $rupills_search_expanded;
+	$rupills_search_expanded = false;
+
+	if ( empty( $query->query_vars['s'] ) ) {
+		return $query;
+	}
+
+	$original = $query->query_vars['s'];
+
+	// Only apply pharma swaps for single-word queries.
+	// Multi-word queries (e.g. "Vitamin C") can produce misleading results (e.g. "Vitamin K").
+	if ( preg_match( '/\s/', trim( $original ) ) ) {
+		return $query;
+	}
+
+	$lower    = mb_strtolower( $original );
+	$variants = array();
+
+	// --- Bidirectional swaps (both directions common in pharma typos) ---
+	$bi_swaps = array(
+		'i'  => 'y',   // Mildronate / Myldronate
+		'y'  => 'i',
+		'ph' => 'f',   // Phenibut / Fenibut, Phosphogliv / Fosfogliv
+		'f'  => 'ph',
+		'c'  => 'k',   // Corvalol / Korvalol, Cyclodol / Kyklodol
+		'k'  => 'c',
+		'x'  => 'ks',  // Xefocam / Ksefokam
+		'ks' => 'x',
+	);
+
+	foreach ( $bi_swaps as $from => $to ) {
+		if ( mb_strpos( $lower, $from ) !== false ) {
+			$variant = str_ireplace( $from, $to, $original );
+			if ( mb_strtolower( $variant ) !== $lower ) {
+				$variants[] = $variant;
+			}
+		}
+	}
+
+	// --- One-directional swaps (reverse direction too aggressive) ---
+	$uni_swaps = array(
+		'th' => 't',   // Methionine / Metionine, Thiamine / Tiamine
+		'w'  => 'v',   // Warfarin / Varfarin
+		'z'  => 's',   // Omeprazole / Omeprasole, Azithromycin / Asithromycin
+	);
+
+	foreach ( $uni_swaps as $from => $to ) {
+		if ( mb_strpos( $lower, $from ) !== false ) {
+			$variant = str_ireplace( $from, $to, $original );
+			if ( mb_strtolower( $variant ) !== $lower ) {
+				$variants[] = $variant;
+			}
+		}
+	}
+
+	// c → s before e/i (Cetirizine / Setirizine, Ciprofloxacin / Siprofloxacin)
+	if ( preg_match( '/c[ei]/i', $original ) ) {
+		$variant = preg_replace( '/c(?=[ei])/i', 's', $original );
+		if ( mb_strtolower( $variant ) !== $lower ) {
+			$variants[] = $variant;
+		}
+	}
+
+	// -ine ↔ -in at word boundary (Amitriptyline / Amitriptylin)
+	if ( preg_match( '/ine\b/i', $original ) ) {
+		$variant = preg_replace( '/ine\b/i', 'in', $original );
+		if ( mb_strtolower( $variant ) !== $lower ) {
+			$variants[] = $variant;
+		}
+	} elseif ( preg_match( '/(?<!e)in\b/i', $original ) ) {
+		$variant = preg_replace( '/in\b/i', 'ine', $original );
+		if ( mb_strtolower( $variant ) !== $lower ) {
+			$variants[] = $variant;
+		}
+	}
+
+	// Double consonant → single (Amoxicillin / Amoxicilin)
+	$doubles = array( 'll', 'ss', 'ff', 'pp', 'tt', 'cc', 'nn', 'mm', 'rr' );
+	foreach ( $doubles as $dd ) {
+		if ( mb_strpos( $lower, $dd ) !== false ) {
+			$variant = str_ireplace( $dd, mb_substr( $dd, 0, 1 ), $original );
+			if ( mb_strtolower( $variant ) !== $lower ) {
+				$variants[] = $variant;
+			}
+		}
+	}
+
+	// Deduplicate
+	$unique = array();
+	foreach ( $variants as $v ) {
+		$vl = mb_strtolower( $v );
+		if ( $vl !== $lower && ! isset( $unique[ $vl ] ) ) {
+			$unique[ $vl ] = $v;
+		}
+	}
+
+	$unique = array_slice( $unique, 0, 10, true );
+
+	if ( ! empty( $unique ) ) {
+		$expanded = $original . ' ' . implode( ' ', array_values( $unique ) );
+		$query->query_vars['s'] = $expanded;
+		$query->query_vars['operator'] = 'OR';
+		$rupills_search_expanded       = true;
+	}
+
+	return $query;
+}
+// ============ End Relevanssi pharma name variants ============
+
+// ============ Relevanssi: index yikes_woo_products_tabs text content ============
+add_filter( 'relevanssi_content_to_index', 'rupills_index_yikes_tabs', 10, 2 );
+function rupills_index_yikes_tabs( $content, $post ) {
+	if ( 'product' !== $post->post_type ) {
+		return $content;
+	}
+
+	$tabs = get_post_meta( $post->ID, 'yikes_woo_products_tabs', true );
+	if ( ! is_array( $tabs ) ) {
+		return $content;
+	}
+
+	$parts = array();
+	foreach ( $tabs as $tab ) {
+		$text = isset( $tab['content'] ) ? trim( wp_strip_all_tags( $tab['content'] ) ) : '';
+		if ( mb_strlen( $text ) > 5 ) {
+			$parts[] = $text;
+		}
+	}
+
+	if ( ! empty( $parts ) ) {
+		$content .= ' ' . implode( ' ', $parts );
+	}
+
+	return $content;
+}
+// ============ End Relevanssi yikes tabs indexing ============
+
+// ============ WPML: hide language switcher on Blockonomics payment page ============
+add_filter( 'icl_ls_languages', 'rupills_hide_lang_switcher_on_blockonomics_payment' );
+function rupills_hide_lang_switcher_on_blockonomics_payment( $languages ) {
+	if ( ! function_exists( 'wc_get_page_id' ) ) {
+		return $languages;
+	}
+
+	$payment_page_id = wc_get_page_id( 'payment' );
+
+	if ( $payment_page_id && is_page( $payment_page_id ) ) {
+		// Returning empty array hides all languages in the switcher.
+		return array();
+	}
+
+	return $languages;
+}
+// ============ End WPML: hide language switcher on Blockonomics payment page ============

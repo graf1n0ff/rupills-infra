@@ -1,11 +1,23 @@
 <?php
 /**
  * Referrer-hiding redirect script.
- * Usage: /go.php?url=https://example.com
+ * Usage: /go.php?s=1        (numeric shortcode)
+ *    or: /go.php?url=https://example.com  (legacy, direct URL)
  * Strips the Referer header so the destination site cannot see the source.
  */
 
-$url = isset($_GET['url']) ? trim($_GET['url']) : '';
+$_shortcodes = [
+    1 => 'https://exchange.mercuryo.io/?currency=BTC&type=buy',
+    3 => 'https://buy.moonpay.com/',
+    4 => 'https://paybis.com/buy-bitcoin/',
+];
+
+$url = '';
+if (isset($_GET['s']) && isset($_shortcodes[(int)$_GET['s']])) {
+    $url = $_shortcodes[(int)$_GET['s']];
+} elseif (isset($_GET['url'])) {
+    $url = trim($_GET['url']);
+}
 
 if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
     http_response_code(400);

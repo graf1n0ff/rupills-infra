@@ -3,7 +3,7 @@ Theme Name: Flatsome Child
 Description: This is a child theme for Flatsome Theme
 Author: UX Themes
 Template: flatsome
-Version: 3.0
+Version: 3.1
 */
 
 /*************** ADD CUSTOM CSS HERE.   ***************/
@@ -81,6 +81,27 @@ span#wacv_checkout_gdpr_block
         height: 50px;
         font-size: 30px;
     }
+}
+
+/* Hide WPML language switcher on Blockonomics payment page (slug: payment) */
+body.page-payment .wpml-ls-statics-shortcode_actions,
+body.page-payment .wpml-ls-legacy-list-horizontal,
+body.page-payment #lang_sel,
+body.page-payment .icl_lang_sel_widget {
+    display: none !important;
+}
+
+
+/* Search button on blue hero banner */
+.is-large .ux-search-submit.secondary {
+    background-color: #fff !important;
+    color: #3498db !important;
+    border: none !important;
+    transition: background-color .2s, color .2s;
+}
+.is-large .ux-search-submit.secondary:hover {
+    background-color: #e8e8e8 !important;
+    color: #2980b9 !important;
 }
 
 @media only screen and (max-width: 48em) {

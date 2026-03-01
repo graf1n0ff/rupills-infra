@@ -14,6 +14,7 @@ html/readme.html
 # WordPress config
 html/wp-config.php
 html/wp-config-sample.php
+html/wp-config.php.backup
 
 # WordPress content - исключаем плагины и uploads
 html/wp-content/plugins/
@@ -36,10 +37,7 @@ db-init/*.sql
 db-init/*.sql.gz
 
 # Backups
-backups/*.tar.gz
-backups/*.sql
-backups/*.sql.gz
-backups/*.enc
+backups/
 !backups/.gitkeep
 
 # Docker volumes
@@ -71,3 +69,74 @@ Thumbs.db
 
 # Backup scripts output
 backup-*.sh.log
+
+# Python
+__pycache__/
+*.pyc
+scrape_eapteka.py
+
+# phpMyAdmin
+phpmyadmin/
+
+# Other root-level files
+wp.htpasswd
+html.land/
+
+# HTML root - static assets and utility scripts
+html/.htaccess*
+html/index.php
+html/index.nginx-debian.html
+html/robots.txt
+html/manifest.json
+html/offline.html
+html/sw.js
+html/pwa-install-prompt.js
+html/session-test.html
+html/superpwa-sw.js*
+html/favicon*
+html/apple-touch-icon.png
+html/android-chrome-*.png
+html/icon_*.png
+html/logo_email.png
+html/whatsapp.svg
+html/pay*.png
+html/pay24/
+
+# HTML root - utility/debug PHP scripts
+html/alert.php
+html/test*.php
+html/fee.*
+html/getfee.php
+html/go.php
+html/kurs/
+html/clear-litespeed-cache.php
+html/debug-rewrite-rules.php
+html/deep-woocommerce-debug.php
+html/emergency-*.php
+html/enable-litespeed-*.php
+html/fix-woocommerce-404.php
+html/flush-rewrite-rules.php
+html/litespeed-*.php
+html/memory_fix.php
+html/memory_monitor.php
+html/remove-litespeed-cron.php
+html/wordpress_memory_optimization.php
+html/wpml_debug_disable.php
+html/wpml_optimize.ini
+
+# HTML root - shell scripts
+html/*.sh
+html/*.cnf
+
+# wp-content misc
+html/wp-content/.litespeed_conf.dat
+html/wp-content/fonts/
+html/wp-content/index.php
+html/wp-content/languages/
+html/wp-content/mu-plugins/
+html/wp-content/object-cache.php
+html/wp-content/updraft/
+html/wp-content/themes/index.php
+
+# flatsome-child - emails templates
+html/wp-content/themes/flatsome-child/woocommerce/emails/
